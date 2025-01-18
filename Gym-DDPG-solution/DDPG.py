@@ -7,6 +7,12 @@ from gymnasium import spaces
 import optparse
 import pickle
 
+# from pink import PinkActionNoise
+# install with pip install pink-noise-rl
+# from https://github.com/martius-lab/pink-noise-rl
+# but not sure how to use it here
+
+
 import memory as mem
 from feedforward import Feedforward
 
@@ -70,6 +76,57 @@ class OUNoise():
     def reset(self) -> None:
         self.noise_prev = np.zeros(self._shape)
 
+
+import numpy as np
+
+
+# code works but we have to check if it makes sense and if it improves something
+class ColoredNoise:
+    def __init__(self, shape, beta: float = 1.0, dt: float = 1e-2):
+        """
+        Frequency-domain noise generator.
+
+        Args:
+            shape (tuple): Shape of the noise sequence.
+            beta (float): Spectral slope parameter.
+                          beta = 0 --> white noise
+                          beta = 1 --> pink noise
+                          beta = 2 --> OU noise
+            dt (float): Time step for scaling.
+        """
+        self._shape = shape
+        self._beta = beta
+        self._dt = dt
+        self.reset()
+
+    def __call__(self) -> np.ndarray:
+        """
+        Generate a single step of noise.
+        """
+        # Generate frequency components
+        freqs = np.fft.rfftfreq(self._shape, d=self._dt)  # Frequencies for Fourier transform
+        # Scale by f^(-β/2), avoiding divide-by-zero
+
+        scale = np.zeros_like(freqs)  # Initialize scale with zeros
+        nonzero_freqs = freqs > 0  # Identify nonzero frequencies
+        scale[nonzero_freqs] = freqs[nonzero_freqs] ** (-self._beta / 2)
+
+        real_part = np.random.normal(0, 1, len(freqs)) * scale  # Real part
+        imag_part = np.random.normal(0, 1, len(freqs)) * scale  # Imaginary part
+
+        # Combine into a complex array for inverse FFT
+        spectrum = real_part + 1j * imag_part
+
+        # Transform back to time domain
+        noise = np.fft.irfft(spectrum, n=self._shape)
+        self.noise_prev = noise  # Store last noise value (optional, for reset compatibility)
+        return noise
+
+    def reset(self) -> None:
+        self.noise_prev = np.zeros(self._shape)
+
+
+
 class DDPGAgent(object):
     """
     Agent implementing Q-learning with NN function approximation.
@@ -102,14 +159,18 @@ class DDPGAgent(object):
         self._config.update(userconfig)
         self._eps = self._config['eps']
 
-        self.action_noise = OUNoise((self._action_n))
+
+        #self.action_noise = OUNoise((self._action_n))
+
+        # pink noise
+        self.action_noise = ColoredNoise((self._action_n))
 
         self.buffer = mem.Memory(max_size=self._config["buffer_size"])
 
         # Q Network
         self.Q = QFunction(observation_dim=self._obs_dim,
                            action_dim=self._action_n,
-                           hidden_sizes= self._config["hidden_sizes_critic"],
+                            hidden_sizes= self._config["hidden_sizes_critic"],
                            learning_rate = self._config["learning_rate_critic"])
         # target Q Network
         self.Q_target = QFunction(observation_dim=self._obs_dim,
