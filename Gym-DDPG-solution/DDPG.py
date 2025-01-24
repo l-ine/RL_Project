@@ -173,12 +173,14 @@ class DDPGAgent(object):
         }
         self._config.update(userconfig)
         self._eps = self._config['eps']
-
-
-        #self.action_noise = OUNoise((self._action_n))
+        self._colNoise = self._config['colNoise']
 
         # pink noise
-        self.action_noise = ColoredNoise((self._action_n))
+        if self._colNoise:
+            self.action_noise = ColoredNoise((self._action_n))
+        # OU Noise (default)
+        else:
+            self.action_noise = OUNoise((self._action_n))
 
         self.buffer = mem.Memory(max_size=self._config["buffer_size"])
 
@@ -299,6 +301,9 @@ def main():
     optParser.add_option('-s', '--seed',action='store',  type='int',
                          dest='seed',default=None,
                          help='random seed (default %default)')
+    optParser.add_option('-a', '--algorithm', action='store', type='string',
+                         dest='alg', default="DDPG-default",
+                         help='algorithm modification (default %default)')
     opts, args = optParser.parse_args()
     ############## Hyperparameters ##############
     env_name = opts.env_name
@@ -316,10 +321,25 @@ def main():
     eps = opts.eps               # noise of DDPG policy
     lr  = opts.lr                # learning rate of DDPG policy
     random_seed = opts.seed
+    alg = opts.alg               # modification of algorithm
+
+    # activate modifications
+    if alg == "DDPG-default":
+        act_pink = False
+        act_RND = False
+    elif alg == "pinkNoise":
+        act_pink = True
+        act_RND = False
+    elif alg == "pinkNoiseRND":
+        act_pink = True
+        act_RND = False
+    else:
+        act_pink, act_RND = False
 
     # Initialization of RND-Module
-    rnd = RNDModule(input_dim=env.observation_space.shape[0], output_dim=16)  # output_dim kann angepasst werden
-    rnd_optimizer = torch.optim.Adam(rnd.parameters(), lr=0.001)  # Optional: Learning rate für das RND-Modul
+    if act_RND:
+        rnd = RNDModule(input_dim=env.observation_space.shape[0], output_dim=16)  # output_dim kann angepasst werden
+        rnd_optimizer = torch.optim.Adam(rnd.parameters(), lr=0.001)  # Optional: Learning rate für das RND-Modul
     #############################################
 
 
@@ -328,7 +348,7 @@ def main():
         np.random.seed(random_seed)
 
     ddpg = DDPGAgent(env.observation_space, env.action_space, eps = eps, learning_rate_actor = lr,
-                     update_target_every = opts.update_every)
+                     update_target_every = opts.update_every, colNoise = act_pink)
 
     # logging variables
     rewards = []
@@ -337,7 +357,7 @@ def main():
     timestep = 0
 
     def save_statistics():
-        with open(f"./results/pinkRND/DDPG_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}-stat.pkl", 'wb') as f:
+        with open(f"./results/DDPG_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}-stat.pkl", 'wb') as f:
             pickle.dump({"rewards" : rewards, "lengths": lengths, "eps": eps, "train": train_iter,
                          "lr": lr, "update_every": opts.update_every, "losses": losses}, f)
 
@@ -353,22 +373,24 @@ def main():
             (ob_new, reward, done, trunc, _info) = env.step(a)
             total_reward += reward
 
-            # Calculate the RND exploration bonus
-            s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
-            exploration_bonus = rnd.forward(s)
-            reward += exploration_bonus.item()
+            if act_RND:
+                # Calculate the RND exploration bonus
+                s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
+                exploration_bonus = rnd.forward(s)
+                reward += exploration_bonus.item()
 
             ddpg.store_transition((ob, a, reward, ob_new, done))
             ob=ob_new
 
-            # Training RND-Module
-            loss_rnd = nn.MSELoss()
-            target_output = rnd.target(s)
-            predicted_output = rnd.predictor(s)
-            loss = loss_rnd(predicted_output, target_output)
-            rnd_optimizer.zero_grad()
-            loss.backward()
-            rnd_optimizer.step()
+            if act_RND:
+                # Training RND-Module
+                loss_rnd = nn.MSELoss()
+                target_output = rnd.target(s)
+                predicted_output = rnd.predictor(s)
+                loss = loss_rnd(predicted_output, target_output)
+                rnd_optimizer.zero_grad()
+                loss.backward()
+                rnd_optimizer.step()
 
             if done or trunc: break
 
