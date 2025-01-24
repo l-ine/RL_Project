@@ -126,6 +126,21 @@ class ColoredNoise:
         self.noise_prev = np.zeros(self._shape)
 
 
+# RND Module
+class RNDModule(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_sizes=[64, 64]):
+        super().__init__()
+        self.predictor = Feedforward(input_dim, hidden_sizes, output_dim)
+        self.target = Feedforward(input_dim, hidden_sizes, output_dim)
+        for param in self.target.parameters():
+            param.requires_grad = False  # Target network is fixed
+
+    def forward(self, state):
+        target_output = self.target(state)
+        predicted_output = self.predictor(state)
+        exploration_bonus = ((target_output - predicted_output) ** 2).mean()
+        return exploration_bonus
+
 
 class DDPGAgent(object):
     """
@@ -301,6 +316,10 @@ def main():
     eps = opts.eps               # noise of DDPG policy
     lr  = opts.lr                # learning rate of DDPG policy
     random_seed = opts.seed
+
+    # Initialization of RND-Module
+    rnd = RNDModule(input_dim=env.observation_space.shape[0], output_dim=16)  # output_dim kann angepasst werden
+    rnd_optimizer = torch.optim.Adam(rnd.parameters(), lr=0.001)  # Optional: Learning rate für das RND-Modul
     #############################################
 
 
@@ -318,12 +337,12 @@ def main():
     timestep = 0
 
     def save_statistics():
-        with open(f"./results/DDPG_{env_name}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}-stat.pkl", 'wb') as f:
+        with open(f"./results/pinkRND/DDPG_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}-stat.pkl", 'wb') as f:
             pickle.dump({"rewards" : rewards, "lengths": lengths, "eps": eps, "train": train_iter,
                          "lr": lr, "update_every": opts.update_every, "losses": losses}, f)
 
     # training loop
-    for i_episode in range(1, max_episodes+1):
+    for i_episode in range(1, int(max_episodes)+1):
         ob, _info = env.reset()
         ddpg.reset()
         total_reward=0
@@ -332,9 +351,25 @@ def main():
             done = False
             a = ddpg.act(ob)
             (ob_new, reward, done, trunc, _info) = env.step(a)
-            total_reward+= reward
+            total_reward += reward
+
+            # Calculate the RND exploration bonus
+            s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
+            exploration_bonus = rnd.forward(s)
+            reward += exploration_bonus.item()
+
             ddpg.store_transition((ob, a, reward, ob_new, done))
             ob=ob_new
+
+            # Training RND-Module
+            loss_rnd = nn.MSELoss()
+            target_output = rnd.target(s)
+            predicted_output = rnd.predictor(s)
+            loss = loss_rnd(predicted_output, target_output)
+            rnd_optimizer.zero_grad()
+            loss.backward()
+            rnd_optimizer.step()
+
             if done or trunc: break
 
         losses.extend(ddpg.train(train_iter))
