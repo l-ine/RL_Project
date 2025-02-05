@@ -139,7 +139,152 @@ class RNDModule(nn.Module):
         exploration_bonus = ((target_output - predicted_output) ** 2).mean()
         return exploration_bonus
 
+class TD3():
+    def __init__(self, observation_space, action_space, **userconfig):
+        if not isinstance(observation_space, spaces.box.Box):
+            raise UnsupportedSpace('Observation space {} incompatible ' \
+                                   'with {}. (Require: Box)'.format(observation_space, self))
+        if not isinstance(action_space, spaces.box.Box):
+            raise UnsupportedSpace('Action space {} incompatible with {}.' \
+                                   ' (Require Box)'.format(action_space, self))
 
+        self._observation_space = observation_space
+        self._obs_dim = self._observation_space.shape[0]
+        self._action_space = action_space
+        self._action_n = self._action_space.shape[0]
+        self._config = {
+            "eps": 0.1,            # Epsilon: noise strength to add to policy
+            "discount": 0.99,
+            "buffer_size": int(1e6),
+            "batch_size": 100,
+            "learning_rate_actor": 0.001,
+            "learning_rate_critic": 0.001,
+            "hidden_sizes_actor": [400, 300],
+            "hidden_sizes_critic": [400, 300],
+            "update_target_every": 2,
+            "use_target_net": True,
+            "policy_noise": 0.2,
+            "noise_clip": 0.5,
+            "policy_freq": 2
+        }
+        self._config.update(userconfig)
+        self._eps = self._config['eps']
+        self._colNoise = self._config['colNoise']
+
+        # pink noise
+        if self._colNoise:
+            self.action_noise = ColoredNoise((self._action_n))
+        # OU Noise (default)
+        else:
+            self.action_noise = OUNoise((self._action_n))
+
+        self.buffer = mem.Memory(max_size=self._config["buffer_size"])
+
+        # Q Networks
+        self.Q1 = QFunction(observation_dim=self._obs_dim,
+                            action_dim=self._action_n,
+                            hidden_sizes=self._config["hidden_sizes_critic"],
+                            learning_rate=self._config["learning_rate_critic"])
+        self.Q2 = QFunction(observation_dim=self._obs_dim,
+                            action_dim=self._action_n,
+                            hidden_sizes=self._config["hidden_sizes_critic"],
+                            learning_rate=self._config["learning_rateCritic"])
+
+        # Target Q Networks
+        self.Q1_target = QFunction(observation_dim=self._obs_dim,
+                            action_dim=self._action_n,
+                            hidden_sizes=self._config["hidden_sizes_critic"],
+                            learning_rate=0)
+        self.Q2_Target = QFunction(observation_dim=self._obs_dim,
+                            action_dim=self._action_n,
+                            hidden_sizes=self._config["hidden_sizes_critic"],
+                            learning_rate=0)
+
+        # Policy Network
+        self.policy = Feedforward(input_size=self._obs_dim,
+                            hidden_sizes=self._config["hidden_sizes_actor"],
+                            output_size=self._action_n,
+                            activation_fun=torch.nn.ReLU(),
+                            output_activation=torch.nn.Tanh())
+        self.policy_Target = Feedforward(input_size=self._obs_dim,
+                            hidden_sizes=self._config["hidden_sizes_actor"],
+                            output_size=self._action_n,
+                            activation_fun=torch.nn.ReLU(),
+                            output_activation=torch.nn.Tanh())
+
+        self._copy_nets()
+
+        self.optimizer = torch.optim.Adam(self.policy.parameters(),
+                                          lr=self._config["learning_rate_actor"],
+                                          eps=0.000001)
+        self.train_iter = 0
+
+    def _copy_nets(self):
+        self.Q1_Target.load_state_dict(self.Q1.state_dict())
+        self.Q2_Target.load_state_dict(self.Q2.state_dict())
+        self.policy_target.load_state_dict(self.policy.state_dict())
+
+    def act(self, observation, eps=None):
+        if eps is None:
+            eps = self._eps
+        action = self.policy.predict(observation) + eps * self.action_noise()
+        action = np.clip(action, self._action_space.low, self._action_space.high)
+        return action
+
+    def store_transition(self, transition):
+        self.buffer.add_transition(transition)
+
+    def state(self):
+        return (self.Q1.state_dict(), self.Q2.state_dict(), self.policy.state_dict())
+
+    def restore_state(self, state):
+        self.Q1.load_state_dict(state[0])
+        self.Q2.load_state_dict(state[1])
+        self.policy.load_state_dict(state[2])
+        self._copy_nets()
+
+    def reset(self):
+        self.action_noise.reset()
+
+    def train(self, iter_fit=1):
+        to_torch = lambda x: torch.from_numpy(x.astype(np.float32))
+        losses = []
+        self.train_iter += 1
+
+        if self.train_iter % self._config["update_target_every"] == 0:
+            self._copy_nets()
+
+        for i in range(iter_fit):
+            data = self.buffer.sample(batch=self._config['batch_size'])
+            s = to_torch(np.stack(data[:, 0]))  # s_t
+            a = to_torch(np.stack(data[:, 1]))  # a_t
+            rew = to_torch(np.stack(data[:, 2])[:, None])  # rew  (batchsize,1)
+            s_prime = to_torch(np.stack(data[:, 3]))  # s_t+1
+            done = to_torch(np.stack(data[:, 4])[:, None])  # done signal  (batchsize,1)
+
+            with torch.no_grad():
+                noise = (torch.randn_like(a) * self._config["policy_noise"]).clamp(-self._config["noise_clip"], self._config["noise_clip"])
+                a_prime = (self.policy_target(s_prime) + noise).clamp(self._action_space.Low, self._action_space.high)
+                q1_prime = self.Q1_Target.Q_value(s_prime, a_prime)
+                q2_prime = self.Q2_Target.Q_value(s_prime, a_prime)
+                q_prime = torch.min(q1_prime, q2_prime)
+                td_target = rew + self._config["discount"] * (1.0 - done) * q_prime
+
+            # Optimize the Q objectives
+            q1_loss = self.Q1.fit(s, a, td_target)
+            q2_loss = self.Q2.fit(s, a, td_target)
+
+            # Optimize actor objective
+            if self.train_iter % self._config["policy_freq"] == 0:
+                self.optimizer.zero_grad()
+                q = torch.min(self.Q1.Q_value(s, self.policy(s)), self.Q2.Q_value(s, self.policy(s)))
+                actor_loss = -torch.mean(q)
+                actor_loss.backward()
+                losses.append((q1_loss, q2_loss, actor_loss.item() if self.train_iter % self._config["policy_freq"] == 0 else 0))
+
+        return losses
+
+                        
 class DDPGAgent(object):
     """
     Agent implementing Q-learning with NN function approximation.
@@ -350,6 +495,8 @@ def main():
     ddpg = DDPGAgent(env.observation_space, env.action_space, eps = eps, learning_rate_actor = lr,
                      update_target_every = opts.update_every, colNoise = act_pink)
 
+    opponent = h_env.BasicOpponent()
+
     # logging variables
     rewards = []
     lengths = []
@@ -364,24 +511,34 @@ def main():
     # training loop
     for i_episode in range(1, int(max_episodes)+1):
         ob, _info = env.reset()
+        obs_agent2 = env.obs_agent_two()
+
         ddpg.reset()
         total_reward=0
+
+
         for t in range(max_timesteps):
             timestep += 1
             done = False
-            a = ddpg.act(ob)
-            (ob_new, reward, done, trunc, _info) = env.step(a)
-            total_reward += reward
+
+            a1 = ddpg.act(ob)
+            a2 = opponent.act(obs_agent2)
+            (ob_new, reward, done, trunc, _info) = env.step(np.hstack([a1, a2]))
+            
 
             if act_RND:
                 # Calculate the RND exploration bonus
                 s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
                 exploration_bonus = rnd.forward(s)
                 reward += exploration_bonus.item()
+            
+            total_reward += reward
 
-            ddpg.store_transition((ob, a, reward, ob_new, done))
+            ddpg.store_transition((ob, a1, reward, ob_new, done))
             ob=ob_new
+            obs_agent2 = env.obs_agent_two()
 
+            # evtl in train() ?
             if act_RND:
                 # Training RND-Module
                 loss_rnd = nn.MSELoss()
