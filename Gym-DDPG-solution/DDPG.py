@@ -169,7 +169,8 @@ class DDPGAgent(object):
             "hidden_sizes_actor": [128,128],
             "hidden_sizes_critic": [128,128,64],
             "update_target_every": 100,
-            "use_target_net": True
+            "use_target_net": True,
+            "colNoise": False
         }
         self._config.update(userconfig)
         self._eps = self._config['eps']
