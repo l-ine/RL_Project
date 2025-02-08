@@ -188,14 +188,14 @@ class TD3():
         self.Q2 = QFunction(observation_dim=self._obs_dim,
                             action_dim=self._action_n,
                             hidden_sizes=self._config["hidden_sizes_critic"],
-                            learning_rate=self._config["learning_rateCritic"])
+                            learning_rate=self._config["learning_rate_critic"])
 
         # Target Q Networks
         self.Q1_target = QFunction(observation_dim=self._obs_dim,
                             action_dim=self._action_n,
                             hidden_sizes=self._config["hidden_sizes_critic"],
                             learning_rate=0)
-        self.Q2_Target = QFunction(observation_dim=self._obs_dim,
+        self.Q2_target = QFunction(observation_dim=self._obs_dim,
                             action_dim=self._action_n,
                             hidden_sizes=self._config["hidden_sizes_critic"],
                             learning_rate=0)
@@ -206,7 +206,7 @@ class TD3():
                             output_size=self._action_n,
                             activation_fun=torch.nn.ReLU(),
                             output_activation=torch.nn.Tanh())
-        self.policy_Target = Feedforward(input_size=self._obs_dim,
+        self.policy_target = Feedforward(input_size=self._obs_dim,
                             hidden_sizes=self._config["hidden_sizes_actor"],
                             output_size=self._action_n,
                             activation_fun=torch.nn.ReLU(),
@@ -220,8 +220,8 @@ class TD3():
         self.train_iter = 0
 
     def _copy_nets(self):
-        self.Q1_Target.load_state_dict(self.Q1.state_dict())
-        self.Q2_Target.load_state_dict(self.Q2.state_dict())
+        self.Q1_target.load_state_dict(self.Q1.state_dict())
+        self.Q2_target.load_state_dict(self.Q2.state_dict())
         self.policy_target.load_state_dict(self.policy.state_dict())
 
     def act(self, observation, eps=None):
@@ -262,11 +262,19 @@ class TD3():
             s_prime = to_torch(np.stack(data[:, 3]))  # s_t+1
             done = to_torch(np.stack(data[:, 4])[:, None])  # done signal  (batchsize,1)
 
+            ### TD3 ###
+            # Trick One: Clipped Double-Q Learning.
+            # TD3 learns two Q-functions instead of one (hence “twin”), and uses the smaller of the two Q-values to form the targets in the Bellman error loss functions.
+            # Trick Two: “Delayed” Policy Updates. 
+            # TD3 updates the policy (and target networks) less frequently than the Q-function. The paper recommends one policy update for every two Q-function updates.
+            # Trick Three: Target Policy Smoothing. 
+            # TD3 adds noise to the target action, to make it harder for the policy to exploit Q-function errors by smoothing out Q along changes in action.
+            
             with torch.no_grad():
                 noise = (torch.randn_like(a) * self._config["policy_noise"]).clamp(-self._config["noise_clip"], self._config["noise_clip"])
-                a_prime = (self.policy_target(s_prime) + noise).clamp(self._action_space.Low, self._action_space.high)
-                q1_prime = self.Q1_Target.Q_value(s_prime, a_prime)
-                q2_prime = self.Q2_Target.Q_value(s_prime, a_prime)
+                a_prime = (self.policy_target(s_prime) + noise).clamp(torch.tensor(self._action_space.low), torch.tensor(self._action_space.high))
+                q1_prime = self.Q1_target.Q_value(s_prime, a_prime)
+                q2_prime = self.Q2_target.Q_value(s_prime, a_prime)
                 q_prime = torch.min(q1_prime, q2_prime)
                 td_target = rew + self._config["discount"] * (1.0 - done) * q_prime
 
@@ -284,6 +292,7 @@ class TD3():
 
         return losses
 
+# DDPG Agent
                         
 class DDPGAgent(object):
     """
@@ -448,6 +457,9 @@ def main():
     optParser.add_option('-a', '--algorithm', action='store', type='string',
                          dest='alg', default="DDPG-default",
                          help='algorithm modification (default %default)')
+    optParser.add_option('-p', '--policy', action='store', type='string',
+                         dest='pol', default="DDPG-default",
+                         help='policy /strategy (DDPG or TD3) (default %default)')
     opts, args = optParser.parse_args()
     ############## Hyperparameters ##############
     env_name = opts.env_name
@@ -468,6 +480,7 @@ def main():
     lr  = opts.lr                # learning rate of DDPG policy
     random_seed = opts.seed
     alg = opts.alg               # modification of algorithm
+    pol = opts.pol               # policy/strategy
 
     # activate modifications
     if alg == "DDPG-default":
@@ -476,9 +489,12 @@ def main():
     elif alg == "pinkNoise":
         act_pink = True
         act_RND = False
+    elif alg == "RND":
+        act_pink = False
+        act_RND = True
     elif alg == "pinkNoiseRND":
         act_pink = True
-        act_RND = False
+        act_RND = True
     else:
         act_pink, act_RND = False
 
@@ -493,9 +509,15 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
-    ddpg = DDPGAgent(env.observation_space, env.action_space, eps = eps, learning_rate_actor = lr,
-                     update_target_every = opts.update_every, colNoise = act_pink)
+    if pol == "DDPG":
+        agent = DDPGAgent(env.observation_space, env.action_space, eps = eps, learning_rate_actor = lr,
+                         update_target_every = opts.update_every, colNoise = act_pink)
+    if pol == "TD3":
+        # Initialize TD3 Agent
+        agent = TD3(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
+              update_target_every=opts.update_every, colNoise=act_pink)
 
+    
     opponent = h_env.BasicOpponent()
 
     # logging variables
@@ -514,7 +536,7 @@ def main():
         ob, _info = env.reset()
         obs_agent2 = env.obs_agent_two()
 
-        ddpg.reset()
+        agent.reset()
         total_reward=0
 
 
@@ -522,7 +544,7 @@ def main():
             timestep += 1
             done = False
 
-            a1 = ddpg.act(ob)
+            a1 = agent.act(ob)
             a2 = opponent.act(obs_agent2)
             (ob_new, reward, done, trunc, _info) = env.step(np.hstack([a1, a2]))
             
@@ -535,7 +557,7 @@ def main():
             
             total_reward += reward
 
-            ddpg.store_transition((ob, a1, reward, ob_new, done))
+            agent.store_transition((ob, a1, reward, ob_new, done))
             ob=ob_new
             obs_agent2 = env.obs_agent_two()
 
@@ -552,7 +574,7 @@ def main():
 
             if done or trunc: break
 
-        losses.extend(ddpg.train(train_iter))
+        losses.extend(agent.train(train_iter))
 
         rewards.append(total_reward)
         lengths.append(t)
@@ -560,7 +582,7 @@ def main():
         # save every 500 episodes
         if i_episode % 500 == 0:
             print("########## Saving a checkpoint... ##########")
-            torch.save(ddpg.state(), f'./results/DDPG_{env_name}_{i_episode}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}.pth')
+            torch.save(agent.state(), f'./results/{pol}_{env_name}_{i_episode}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}.pth')
             save_statistics()
 
         # logging
