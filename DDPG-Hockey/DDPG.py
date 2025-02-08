@@ -455,7 +455,7 @@ def main():
                          dest='seed',default=None,
                          help='random seed (default %default)')
     optParser.add_option('-a', '--algorithm', action='store', type='string',
-                         dest='alg', default="DDPG-default",
+                         dest='alg', default="pure",
                          help='algorithm modification (default %default)')
     optParser.add_option('-p', '--policy', action='store', type='string',
                          dest='pol', default="DDPG-default",
@@ -483,7 +483,7 @@ def main():
     pol = opts.pol               # policy/strategy
 
     # activate modifications
-    if alg == "DDPG-default":
+    if alg == "pure":
         act_pink = False
         act_RND = False
     elif alg == "pinkNoise":
@@ -496,7 +496,7 @@ def main():
         act_pink = True
         act_RND = True
     else:
-        act_pink, act_RND = False
+        raise ValueError("Unknown algorithm modification")
 
     # Initialization of RND-Module
     if act_RND:
@@ -527,7 +527,7 @@ def main():
     timestep = 0
 
     def save_statistics():
-        with open(f"./results/DDPG_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}-stat.pkl", 'wb') as f:
+        with open(f"./results/{pol}_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}-stat.pkl", 'wb') as f:
             pickle.dump({"rewards" : rewards, "lengths": lengths, "eps": eps, "train": train_iter,
                          "lr": lr, "update_every": opts.update_every, "losses": losses}, f)
 
@@ -582,7 +582,7 @@ def main():
         # save every 500 episodes
         if i_episode % 500 == 0:
             print("########## Saving a checkpoint... ##########")
-            torch.save(agent.state(), f'./results/{pol}_{env_name}_{i_episode}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}.pth')
+            torch.save(agent.state(), f'./results/{pol}_{alg}_{env_name}_{i_episode}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}.pth')
             save_statistics()
 
         # logging
