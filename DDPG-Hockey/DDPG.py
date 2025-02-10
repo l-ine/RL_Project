@@ -154,18 +154,19 @@ class TD3():
         self._action_n = self._action_space.shape[0]
         self._config = {
             "eps": 0.1,            # Epsilon: noise strength to add to policy
-            "discount": 0.99,
+            "discount": 0.95,
             "buffer_size": int(1e6),
-            "batch_size": 100,
-            "learning_rate_actor": 0.001,
-            "learning_rate_critic": 0.001,
-            "hidden_sizes_actor": [400, 300],
-            "hidden_sizes_critic": [400, 300],
-            "update_target_every": 2,
+            "batch_size": 128,
+            "learning_rate_actor": 0.00001,
+            "learning_rate_critic": 0.0001,
+            "hidden_sizes_actor": [128, 128],
+            "hidden_sizes_critic": [128, 128, 64],
+            "update_target_every": 100,
             "use_target_net": True,
             "policy_noise": 0.2,
             "noise_clip": 0.5,
-            "policy_freq": 2
+            "policy_freq": 2,
+            "colNoise": False
         }
         self._config.update(userconfig)
         self._eps = self._config['eps']
@@ -246,7 +247,7 @@ class TD3():
     def reset(self):
         self.action_noise.reset()
 
-    def train(self, iter_fit=1):
+    def train(self, iter_fit=32):
         to_torch = lambda x: torch.from_numpy(x.astype(np.float32))
         losses = []
         self.train_iter += 1
@@ -271,11 +272,20 @@ class TD3():
             # TD3 adds noise to the target action, to make it harder for the policy to exploit Q-function errors by smoothing out Q along changes in action.
             
             with torch.no_grad():
+                # Generate noise for target policy smoothing
                 noise = (torch.randn_like(a) * self._config["policy_noise"]).clamp(-self._config["noise_clip"], self._config["noise_clip"])
+                
+                # Compute the target action with added noise and clamp it within the action space bounds
                 a_prime = (self.policy_target(s_prime) + noise).clamp(torch.tensor(self._action_space.low), torch.tensor(self._action_space.high))
+                
+                # Compute the target Q-values using the target Q-networks
                 q1_prime = self.Q1_target.Q_value(s_prime, a_prime)
                 q2_prime = self.Q2_target.Q_value(s_prime, a_prime)
+                
+                # Use the minimum of the two Q-values to form the target
                 q_prime = torch.min(q1_prime, q2_prime)
+                
+                # Compute the TD target
                 td_target = rew + self._config["discount"] * (1.0 - done) * q_prime
 
             # Optimize the Q objectives
@@ -501,7 +511,7 @@ def main():
     # Initialization of RND-Module
     if act_RND:
         rnd = RNDModule(input_dim=env.observation_space.shape[0], output_dim=16)  # output_dim kann angepasst werden
-        rnd_optimizer = torch.optim.Adam(rnd.parameters(), lr=0.001)  # Optional: Learning rate für das RND-Modul
+        rnd_optimizer = torch.optim.Adam(rnd.parameters(), lr=0.01)  # Optional: Learning rate für das RND-Modul
     #############################################
 
 
@@ -548,32 +558,34 @@ def main():
             a2 = opponent.act(obs_agent2)
             (ob_new, reward, done, trunc, _info) = env.step(np.hstack([a1, a2]))
             
+            total_reward += reward
 
             if act_RND:
                 # Calculate the RND exploration bonus
                 s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
                 exploration_bonus = rnd.forward(s)
                 reward += exploration_bonus.item()
+                #print("rnd reward:", reward)
             
-            total_reward += reward
-
             agent.store_transition((ob, a1, reward, ob_new, done))
             ob=ob_new
             obs_agent2 = env.obs_agent_two()
 
             # evtl in train() ?
-            if act_RND:
-                # Training RND-Module
-                loss_rnd = nn.MSELoss()
-                target_output = rnd.target(s)
-                predicted_output = rnd.predictor(s)
-                loss = loss_rnd(predicted_output, target_output)
-                rnd_optimizer.zero_grad()
-                loss.backward()
-                rnd_optimizer.step()
+            if i_episode % 5 == 0:
+                if act_RND:
+                    # Training RND-Module
+                    loss_rnd = nn.MSELoss()
+                    target_output = rnd.target(s)
+                    predicted_output = rnd.predictor(s)
+                    loss = loss_rnd(predicted_output, target_output)
+                    rnd_optimizer.zero_grad()
+                    loss.backward()
+                    rnd_optimizer.step()
 
             if done or trunc: break
 
+        #print("total reward after 250 steps:", total_reward)
         losses.extend(agent.train(train_iter))
 
         rewards.append(total_reward)
@@ -582,7 +594,7 @@ def main():
         # save every 500 episodes
         if i_episode % 500 == 0:
             print("########## Saving a checkpoint... ##########")
-            torch.save(agent.state(), f'./results/{pol}_{alg}_{env_name}_{i_episode}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}.pth')
+            torch.save(agent.state(), f'./results/{pol}_{alg}_{env_name}_{i_episode}_m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}.pth')
             save_statistics()
 
         # logging
