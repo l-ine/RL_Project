@@ -519,14 +519,13 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
-    if pol == "DDPG":
-        agent = DDPGAgent(env.observation_space, env.action_space, eps = eps, learning_rate_actor = lr,
-                         update_target_every = opts.update_every, colNoise = act_pink)
     if pol == "TD3":
         # Initialize TD3 Agent
         agent = TD3(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
               update_target_every=opts.update_every, colNoise=act_pink)
-
+    else: # so pol=="DDPG" is default
+        agent = DDPGAgent(env.observation_space, env.action_space, eps = eps, learning_rate_actor = lr,
+                         update_target_every = opts.update_every, colNoise = act_pink)
     
     opponent = h_env.BasicOpponent()
 
