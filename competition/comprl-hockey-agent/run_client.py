@@ -9,6 +9,9 @@ import numpy as np
 
 from comprl.client import Agent, launch_client
 
+# TODO: Hier der richtige Pfad?
+import RL_Project.DDPG-Hockey.DDPG
+
 
 class RandomAgent(Agent):
     """A hockey agent that simply uses random actions."""
@@ -33,7 +36,7 @@ class HockeyAgent(Agent):
     def __init__(self, weak: bool) -> None:
         super().__init__()
         #self.hockey_agent = h_env.BasicOpponent(weak=weak)
-        self.hockey_agent = h_env.DDPGOpponent()
+        self.hockey_agent = DDPG.DDPGOpponent()
 
     def get_step(self, observation: list[float]) -> list[float]:
 
@@ -43,8 +46,8 @@ class HockeyAgent(Agent):
         # NOTE: If your agent is using discrete actions (0-7), you can use
         # HockeyEnv.discrete_to_continous_action to convert the action:
         #
-        from hockey.hockey_env import HockeyEnv
-        env = HockeyEnv()
+
+        env = h_env.HockeyEnv()
         continuous_action = env.discrete_to_continous_action(action)
 
         #return action

@@ -440,6 +440,27 @@ class DDPGAgent(object):
 
         return losses
 
+class DDPGOpponent():
+  def __init__(self, keep_mode=True):
+    self.keep_mode = keep_mode
+
+    env_name = "RND_Hockey"
+    alg = "pinkNoiseRND"
+    eps = 0.1
+    ts = 32
+    lr = 0.0001
+    s = None
+    episodes = 2000
+
+    #checkpoint = f"./best_agent/DDPG_{env_name}_{episodes}-eps{eps}-t{ts}-l{lr}-sNone.pth"
+    checkpoint = "C:/Users/pi030/Documents/Uni/ReinforcementLearning/finalProject/RLenv.venv/Lib/site-packages/hockey/best_agent/DDPG_RND_Hockey_2000-m2005.0-eps0.1-t32-l0.0001-s1.pth"
+    env = h_env.HockeyEnv()
+    self.agent = DDPGAgent(env.observation_space, env.action_space)
+    self.agent.restore_state(torch.load(checkpoint))
+
+  def act(self, obs):
+    action = self.agent.act(obs)
+    return action
 
 def main():
     optParser = optparse.OptionParser()
