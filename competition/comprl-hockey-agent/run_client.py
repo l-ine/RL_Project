@@ -9,8 +9,14 @@ import numpy as np
 
 from comprl.client import Agent, launch_client
 
+import sys
+import os
+
+# Absoluten Pfad zu RL_Project berechnen und zu sys.path hinzufügen
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
+
 # TODO: Hier der richtige Pfad?
-import RL_Project.DDPG-Hockey.DDPG
+import RL_Project.DDPG_Hockey.DDPG as DDPG
 
 
 class RandomAgent(Agent):

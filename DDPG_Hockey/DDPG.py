@@ -14,8 +14,8 @@ import hockey.hockey_env as h_env
 # but not sure how to use it here
 
 
-import memory as mem
-from feedforward import Feedforward
+from . import memory as mem
+from .feedforward import Feedforward
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.set_num_threads(1)
@@ -440,6 +440,7 @@ class DDPGAgent(object):
 
         return losses
 
+# a trained Opponent (DDPG Agent) to play against in the Hockey environment
 class DDPGOpponent():
   def __init__(self, keep_mode=True):
     self.keep_mode = keep_mode
@@ -452,8 +453,7 @@ class DDPGOpponent():
     s = None
     episodes = 2000
 
-    #checkpoint = f"./best_agent/DDPG_{env_name}_{episodes}-eps{eps}-t{ts}-l{lr}-sNone.pth"
-    checkpoint = "C:/Users/pi030/Documents/Uni/ReinforcementLearning/finalProject/RLenv.venv/Lib/site-packages/hockey/best_agent/DDPG_RND_Hockey_2000-m2005.0-eps0.1-t32-l0.0001-s1.pth"
+    checkpoint = "../../agents/DDPG_RND_Hockey_2000-m2005.0-eps0.1-t32-l0.0001-s1.pth"
     env = h_env.HockeyEnv()
     self.agent = DDPGAgent(env.observation_space, env.action_space)
     self.agent.restore_state(torch.load(checkpoint))

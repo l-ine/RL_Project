@@ -23,4 +23,6 @@ class Feedforward(torch.nn.Module):
 
     def predict(self, x):
         with torch.no_grad():
+            if not isinstance(x, np.ndarray):
+                x = np.array(x, dtype=np.float32)
             return self.forward(torch.from_numpy(x.astype(np.float32))).numpy()
