@@ -448,6 +448,7 @@ class DDPGAgent(object):
         to_torch = lambda x: torch.from_numpy(x.astype(np.float32))
         losses = []
         self.train_iter += 1
+
         if self._config["use_target_net"] and self.train_iter % self._config["update_target_every"] == 0:
             self._copy_nets()
         for i in range(iter_fit):
@@ -459,6 +460,7 @@ class DDPGAgent(object):
             rew = to_torch(np.stack(data[:, 2])[:, None])  # rew  (batchsize,1)
             s_prime = to_torch(np.stack(data[:, 3]))  # s_t+1
             done = to_torch(np.stack(data[:, 4])[:, None])  # done signal  (batchsize,1)
+            #print(f"s: {s.shape}\na: {a.shape}\nrew: {rew.shape}\ns_prime:{s_prime.shape}\ndone:{done.shape}")
 
             if self._config["use_target_net"]:
                 q_prime = self.Q_target.Q_value(s_prime, self.policy_target.forward(s_prime))
@@ -547,9 +549,10 @@ def main():
     else:
         env = gym.make(env_name)
     render = False
-    log_interval = 20           # print avg reward in the interval
+    log_interval = 100           # print avg reward in the interval
     max_episodes = opts.max_episodes  # max training episodes
     max_timesteps = 2000         # max timesteps in one episode
+    num_games = 200
 
     train_iter = opts.train      # update networks for given batched after every episode
     eps = opts.eps               # noise of DDPG policy
@@ -616,92 +619,101 @@ def main():
 
     # training loop
     for i_episode in range(1, int(max_episodes)+1):
-        ob, _info = env.reset()
-        obs_agent2 = env.obs_agent_two()
-
-        agent.reset()
-        total_reward = 0
 
         # RND counter
         if i_episode % 20 == 0:
             counter += 1
 
-        for t in range(max_timesteps):
-            timestep += 1
-            # done = False
-
-            a1 = agent.act(ob)
-            a2 = opponent.act(obs_agent2)
-            (ob_new, reward, done, trunc, _info) = env.step(np.hstack([a1, a2]))
-            
-            total_reward += reward
-
-            # RND
-            if act_RND:
-                # Calculate the RND exploration bonus
-                s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
-                exploration_bonus = rnd.forward(s).item()
-                rnd_states.append(s)
-
-                rnd_bonus_stats.update([exploration_bonus])
-                normalized_bonus = rnd_bonus_stats.normalize(exploration_bonus)
-
-                if exploration_bonus > rnd_threshold:  # if state is unknown -> explore
-                    reward += rnd_scale * normalized_bonus
-
-                # Limitation of the buffer size to avoid storage problems
-                if len(rnd_states) > 1000:
-                    rnd_state_to_remove = random.choice(rnd_states)
-                    rnd_states = [state for state in rnd_states if not (torch.equal(state, rnd_state_to_remove))]
-
-                if i_episode % (1 * counter) == 0:
-                    # Training RND-Module batch-wise
-                    if len(rnd_states) >= batch_size_rnd:
-                        # Select states batch-wise
-                        rnd_states.sort(key=lambda x: rnd.forward(x).item(), reverse=True)
-                        states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(
-                            device)  # train the most difficult states
-
-                        # states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(device)
-                        # Target and predictor
-                        target_output = rnd.target(states_batch)
-                        predicted_output = rnd.predictor(states_batch)
-                        # RND loss and optimizer
-                        # Different loss functions: L1Loss, MSELoss(), CrossEntropyLoss,
-                        # see https://pytorch.org/docs/stable/nn.html
-                        loss_rnd = nn.SmoothL1Loss()(predicted_output, target_output)
-                        rnd_optimizer.zero_grad()
-                        loss_rnd.backward()
-                        rnd_optimizer.step()
-                        # Delete from list
-                        del rnd_states[:batch_size_rnd]
-            
-            agent.store_transition((ob, a1, reward, ob_new, done))
-            ob = ob_new
+        for game in range(1, int(num_games) + 1):
+            ob, _info = env.reset()
             obs_agent2 = env.obs_agent_two()
+            agent.reset()
 
-            if done or trunc:
-                break
+            total_reward_of_game = 0
+            end_reward = 0
+            steps_per_game = 0
+            for t in range(int(max_timesteps)):
+                steps_per_game += 1
 
-        # print("total reward after 250 steps:", total_reward)
+                a1 = agent.act(ob)
+                a2 = opponent.act(obs_agent2)
+                (ob_new, reward, done, trunc, _info) = env.step(np.hstack([a1, a2]))
+
+                total_reward_of_game += reward
+
+                # RND
+                if act_RND:
+                    # Calculate the RND exploration bonus
+                    s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
+                    exploration_bonus = rnd.forward(s).item()
+                    rnd_states.append(s)
+
+                    rnd_bonus_stats.update([exploration_bonus])
+                    normalized_bonus = rnd_bonus_stats.normalize(exploration_bonus)
+
+                    if exploration_bonus > rnd_threshold:  # if state is unknown -> explore
+                        reward += rnd_scale * normalized_bonus
+
+                    # Limitation of the buffer size to avoid storage problems
+                    if len(rnd_states) > 1000:
+                        rnd_state_to_remove = random.choice(rnd_states)
+                        rnd_states = [state for state in rnd_states if not (torch.equal(state, rnd_state_to_remove))]
+
+                    if i_episode % (1 * counter) == 0:
+                        # Training RND-Module batch-wise
+                        if len(rnd_states) >= batch_size_rnd:
+                            # Select states batch-wise
+                            rnd_states.sort(key=lambda x: rnd.forward(x).item(), reverse=True)
+                            states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(
+                                device)  # train the most difficult states
+
+                            # states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(device)
+                            # Target and predictor
+                            target_output = rnd.target(states_batch)
+                            predicted_output = rnd.predictor(states_batch)
+                            # RND loss and optimizer
+                            # Different loss functions: L1Loss, MSELoss(), CrossEntropyLoss,
+                            # see https://pytorch.org/docs/stable/nn.html
+                            loss_rnd = nn.SmoothL1Loss()(predicted_output, target_output)
+                            rnd_optimizer.zero_grad()
+                            loss_rnd.backward()
+                            rnd_optimizer.step()
+                            # Delete from list
+                            del rnd_states[:batch_size_rnd]
+
+                agent.store_transition((ob, a1, reward, ob_new, done))
+                #print(f"reward stored: {reward}")
+                ob = ob_new
+                obs_agent2 = env.obs_agent_two()
+
+                end_reward = reward
+                if done or trunc:
+                    #print(_info)
+                    if reward <= -10.0 or reward >= 10.0:
+                        print(f"last reward in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: {reward}")
+                    break
+
+            #print(f"reward stored before game ended in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: {reward}")
+            ## save to plot
+            rewards.append(end_reward)
+            lengths.append(steps_per_game)
+
+            # logging
+            if game % log_interval == 0:
+                avg_reward_per_game = np.mean(rewards[-log_interval:])
+                avg_steps_per_game = int(np.mean(lengths[-log_interval:]))
+
+                print('Episode {} \t avg length: {} \t reward: {}'.format(i_episode, avg_steps_per_game, avg_reward_per_game))
+
         losses.extend(agent.train(train_iter))
 
-        rewards.append(total_reward)
-        lengths.append(t)
-
         # save every 500 episodes
-        if i_episode % 500 == 0:
+        if i_episode % 50 == 0:
             print("########## Saving a checkpoint... ##########")
             torch.save(agent.state(), f'./results/{pol}_{alg}_{env_name}_{i_episode}_m{max_episodes}-eps{eps}'
                                       f'-t{train_iter}-l{lr}-s{random_seed}.pth')
             save_statistics()
 
-        # logging
-        if i_episode % log_interval == 0:
-            avg_reward = np.mean(rewards[-log_interval:])
-            avg_length = int(np.mean(lengths[-log_interval:]))
-
-            print('Episode {} \t avg length: {} \t reward: {}'.format(i_episode, avg_length, avg_reward))
     save_statistics()
 
 
