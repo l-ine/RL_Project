@@ -16,8 +16,8 @@ import random  # for RND
 
 import memory as mem
 from feedforward import Feedforward
-# from . import memory as mem
-# from .feedforward import Feedforward
+#from . import memory as mem
+#from .feedforward import Feedforward
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.set_num_threads(1)
@@ -283,8 +283,11 @@ class TD3():
         losses = []
         self.train_iter += 1
 
-        if self.train_iter % self._config["update_target_every"] == 0:
+        #if self.train_iter % self._config["update_target_every"] == 0:
+        #    self._copy_nets()
+        if self._config["use_target_net"] and self.train_iter % self._config["update_target_every"] == 0:
             self._copy_nets()
+        
 
         for i in range(iter_fit):
             data = self.buffer.sample(batch=self._config['batch_size'])
@@ -294,46 +297,48 @@ class TD3():
             s_prime = to_torch(np.stack(data[:, 3]))  # s_t+1
             done = to_torch(np.stack(data[:, 4])[:, None])  # done signal  (batchsize,1)
 
-            # ### TD3 ###
-            # Trick One: Clipped Double-Q Learning.
-            # TD3 learns two Q-functions instead of one (hence “twin”), and uses the smaller of the two Q-values to form
-            # the targets in the Bellman error loss functions.
-            # Trick Two: “Delayed” Policy Updates. 
-            # TD3 updates the policy (and target networks) less frequently than the Q-function. The paper recommends one
-            # policy update for every two Q-function updates.
-            # Trick Three: Target Policy Smoothing. 
-            # TD3 adds noise to the target action, to make it harder for the policy to exploit Q-function errors by
-            # smoothing out Q along changes in action.
-            
             with torch.no_grad():
+                # Trick 3: Target Policy Smoothing. 
+                # TD3 adds noise to the target action, to make it harder for the policy to exploit Q-function errors by
+                # smoothing out Q along changes in action.
+            
                 # Generate noise for target policy smoothing
                 noise = (torch.randn_like(a) * self._config["policy_noise"]).clamp(-self._config["noise_clip"],
-                                                                                   self._config["noise_clip"])
+                                                                                    self._config["noise_clip"])
                 
                 # Compute the target action with added noise and clamp it within the action space bounds
                 a_prime = (self.policy_target(s_prime) + noise).clamp(torch.tensor(self._action_space.low),
-                                                                      torch.tensor(self._action_space.high))
-                
+                                                                        torch.tensor(self._action_space.high))
+                    
+                # Trick 1: Clipped Double-Q Learning.
+                # TD3 learns two Q-functions instead of one (hence “twin”), and uses the smaller of the two Q-values to form
+                # the targets in the Bellman error loss functions.
                 # Compute the target Q-values using the target Q-networks
                 q1_prime = self.Q1_target.Q_value(s_prime, a_prime)
                 q2_prime = self.Q2_target.Q_value(s_prime, a_prime)
                 
                 # Use the minimum of the two Q-values to form the target
                 q_prime = torch.min(q1_prime, q2_prime)
-                
-                # Compute the TD target
-                td_target = rew + self._config["discount"] * (1.0 - done) * q_prime
+            
+            # Compute the TD target
+            gamma = self._config['discount']
+            td_target = rew + gamma * (1.0 - done) * q_prime
 
             # Optimize the Q objectives
             q1_loss = self.Q1.fit(s, a, td_target)
             q2_loss = self.Q2.fit(s, a, td_target)
 
+            # Trick 2: “Delayed” Policy Updates. 
+            # TD3 updates the policy (and target networks) less frequently than the Q-function, recommended: one
+            # policy update for every two Q-function updates.
+            
             # Optimize actor objective
             if self.train_iter % self._config["policy_freq"] == 0:
                 self.optimizer.zero_grad()
                 q = torch.min(self.Q1.Q_value(s, self.policy(s)), self.Q2.Q_value(s, self.policy(s)))
                 actor_loss = -torch.mean(q)
                 actor_loss.backward()
+                self.optimizer.step()
                 losses.append(
                     (q1_loss, q2_loss, actor_loss.item() if self.train_iter % self._config["policy_freq"] == 0 else 0))
 
@@ -491,7 +496,8 @@ class DDPGOpponent():
     # s = None
     # episodes = 2000
 
-    checkpoint = "../../agents/DDPG_RND_Hockey_2000-m2005.0-eps0.1-t32-l0.0001-s1.pth"
+    #checkpoint = "../../agents/DDPG_RND_Hockey_2000-m2005.0-eps0.1-t32-l0.0001-s1.pth"
+    checkpoint = "../../agents/DDPG_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1-u20.0.pth"
     env = h_env.HockeyEnv()
     self.agent = DDPGAgent(env.observation_space, env.action_space)
     self.agent.restore_state(torch.load(checkpoint))
