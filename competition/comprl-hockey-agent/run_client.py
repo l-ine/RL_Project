@@ -12,11 +12,10 @@ from comprl.client import Agent, launch_client
 import sys
 import os
 
-# Absoluten Pfad zu RL_Project berechnen und zu sys.path hinzufügen
+# Absoluten Pfad zu DDPG_Hockey berechnen und zu sys.path hinzufügen
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
-
-# TODO: Hier der richtige Pfad?
-import RL_Project.DDPG_Hockey.DDPG as DDPG
+#sys.path.append(r"C:\Users\pi030\Documents\Uni\ReinforcementLearning\finalProject\code\RL_Project\DDPG_Hockey")
+import DDPG
 
 
 class RandomAgent(Agent):
@@ -51,13 +50,12 @@ class HockeyAgent(Agent):
         #print(f"action: {action}")
         # NOTE: If your agent is using discrete actions (0-7), you can use
         # HockeyEnv.discrete_to_continous_action to convert the action:
-        #
 
-        env = h_env.HockeyEnv()
-        continuous_action = env.discrete_to_continous_action(action)
+        #env = h_env.HockeyEnv()
+        #continuous_action = env.discrete_to_continous_action(action)
 
-        #return action
-        return continuous_action
+        return action
+        #return continuous_action
 
     def on_start_game(self, game_id) -> None:
         game_id = uuid.UUID(int=int.from_bytes(game_id, byteorder='big'))

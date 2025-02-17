@@ -181,8 +181,11 @@ class TD3():
 
         self._observation_space = observation_space
         self._obs_dim = self._observation_space.shape[0]
+        self._action_n = int(action_space.shape[0] / 2)
         self._action_space = action_space
-        self._action_n = self._action_space.shape[0]
+        self.half_action_space = spaces.Box(action_space.low[:self._action_n],
+                                            action_space.high[:self._action_n],
+                                            (self._action_n,), dtype=np.float32)
         self._config = {
             "eps": 0.1,            # Epsilon: noise strength to add to policy
             "discount": 0.95,
@@ -260,7 +263,7 @@ class TD3():
         if eps is None:
             eps = self._eps
         action = self.policy.predict(observation) + eps * self.action_noise()
-        action = np.clip(action, self._action_space.low, self._action_space.high)
+        action = np.clip(action, self.half_action_space.low, self.half_action_space.high)
         return action
 
     def store_transition(self, transition):
@@ -307,8 +310,8 @@ class TD3():
                                                                                     self._config["noise_clip"])
                 
                 # Compute the target action with added noise and clamp it within the action space bounds
-                a_prime = (self.policy_target(s_prime) + noise).clamp(torch.tensor(self._action_space.low),
-                                                                        torch.tensor(self._action_space.high))
+                a_prime = (self.policy_target(s_prime) + noise).clamp(torch.tensor(self.half_action_space.low),
+                                                                        torch.tensor(self.half_action_space.high))
                     
                 # Trick 1: Clipped Double-Q Learning.
                 # TD3 learns two Q-functions instead of one (hence “twin”), and uses the smaller of the two Q-values to form
@@ -361,8 +364,11 @@ class DDPGAgent(object):
 
         self._observation_space = observation_space
         self._obs_dim = self._observation_space.shape[0]
+        self._action_n = int(action_space.shape[0] / 2)
         self._action_space = action_space
-        self._action_n = action_space.shape[0]
+        self.half_action_space = spaces.Box(action_space.low[:self._action_n],
+                          action_space.high[:self._action_n],
+                          (self._action_n,), dtype=np.float32)
         self._config = {
             "eps": 0.1,            # Epsilon: noise strength to add to policy
             "discount": 0.95,
@@ -425,9 +431,9 @@ class DDPGAgent(object):
     def act(self, observation, eps=None):
         if eps is None:
             eps = self._eps
-        #
-        action = self.policy.predict(observation) + eps*self.action_noise()  # action in -1 to 1 (+ noise)
-        action = self._action_space.low + (action + 1.0) / 2.0 * (self._action_space.high - self._action_space.low)
+        action_pure = self.policy.predict(observation)
+        action_eps = action_pure + eps*self.action_noise()  # action in -1 to 1 (+ noise)
+        action = np.clip(action_eps, self.half_action_space.low, self.half_action_space.high)
         return action
 
     def store_transition(self, transition):
@@ -498,14 +504,15 @@ class DDPGOpponent():
     # s = None
     # episodes = 2000
 
-    #checkpoint = "../../agents/DDPG_RND_Hockey_2000-m2005.0-eps0.1-t32-l0.0001-s1.pth"
-    checkpoint = "../../agents/DDPG_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1-u20.0.pth"
-    env = h_env.HockeyEnv()
+    checkpoint = "../../agents/DDPG-default_pure_Hockey_50_m2000-eps0.1-t32-l0.0001-s1.pth"
+    #checkpoint = "../../agents/DDPG_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1-u20.0.pth"
+    env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
     self.agent = DDPGAgent(env.observation_space, env.action_space)
-    self.agent.restore_state(torch.load(checkpoint))
+    self.agent.restore_state(torch.load(checkpoint, weights_only=True))
 
   def act(self, obs):
     action = self.agent.act(obs)
+    #print(f"DDPG Opponent action: {action}")
     return action
 
 
@@ -538,22 +545,24 @@ def main():
     optParser.add_option('-p', '--policy', action='store', type='string',
                          dest='pol', default="DDPG-default",
                          help='policy /strategy (DDPG or TD3) (default %default)')
+    optParser.add_option('-d', '--debug', action='store_true', dest='debug_mode',
+                         default=False, help='debug mode for more insight (default %default)')
     opts, args = optParser.parse_args()
     # ############# Hyperparameters ##############
+    debug_mode = opts.debug_mode
     env_name = opts.env_name
     # creating environment
     if env_name == "LunarLander-v2":
         env = gym.make(env_name, continuous = True)
     if env_name == "Hockey":
-        env = h_env.HockeyEnv()
+        env = h_env.HockeyEnv(verbose=debug_mode)
     else:
         env = gym.make(env_name)
     render = False
-    log_interval = 100           # print avg reward in the interval
+    log_interval = 50           # print avg reward in the interval
     max_episodes = opts.max_episodes  # max training episodes
     max_timesteps = 2000         # max timesteps in one episode
-    num_games = 200
-
+    num_games = 50               # games per episode (training after each episode)
     train_iter = opts.train      # update networks for given batched after every episode
     eps = opts.eps               # noise of DDPG policy
     lr = opts.lr                 # learning rate of DDPG policy
@@ -624,6 +633,10 @@ def main():
         if i_episode % 20 == 0:
             counter += 1
 
+        # goal counter
+        player_1_goals = 0
+        player_2_goals = 0
+
         for game in range(1, int(num_games) + 1):
             ob, _info = env.reset()
             obs_agent2 = env.obs_agent_two()
@@ -637,6 +650,10 @@ def main():
 
                 a1 = agent.act(ob)
                 a2 = opponent.act(obs_agent2)
+
+                if(debug_mode):
+                    print(f"action agent: {a1}")
+                    print(f"action basic opponent: {a2}")
                 (ob_new, reward, done, trunc, _info) = env.step(np.hstack([a1, a2]))
 
                 total_reward_of_game += reward
@@ -682,7 +699,8 @@ def main():
                             del rnd_states[:batch_size_rnd]
 
                 agent.store_transition((ob, a1, reward, ob_new, done))
-                #print(f"reward stored: {reward}")
+                if debug_mode:
+                    print(f"reward stored: {reward}")
                 ob = ob_new
                 obs_agent2 = env.obs_agent_two()
 
@@ -690,7 +708,12 @@ def main():
                 if done or trunc:
                     #print(_info)
                     if reward <= -10.0 or reward >= 10.0:
-                        print(f"last reward in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: {reward}")
+                        if debug_mode:
+                            print(f"last reward in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: {reward}")
+                        if reward <= -10.0:
+                            player_2_goals +=1
+                        if reward >= 10.0:
+                            player_1_goals +=1
                     break
 
             #print(f"reward stored before game ended in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: {reward}")
@@ -703,7 +726,10 @@ def main():
                 avg_reward_per_game = np.mean(rewards[-log_interval:])
                 avg_steps_per_game = int(np.mean(lengths[-log_interval:]))
 
-                print('Episode {} \t avg length: {} \t reward: {}'.format(i_episode, avg_steps_per_game, avg_reward_per_game))
+                print('Episode {}, {}/{} games played:\n \t avg length: {} \t avg reward per game: {}\n \t goals player 1: {} \t goals player 2: {}\n'
+                      .format(i_episode, game, num_games, avg_steps_per_game, avg_reward_per_game, player_1_goals, player_2_goals))
+                player_1_goals = 0
+                player_2_goals = 0
 
         losses.extend(agent.train(train_iter))
 
