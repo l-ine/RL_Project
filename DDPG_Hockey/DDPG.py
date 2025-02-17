@@ -493,27 +493,32 @@ class DDPGAgent(object):
 
 # a trained Opponent (DDPG Agent) to play against in the Hockey environment
 class DDPGOpponent():
+    def __init__(self, keep_mode=True):
+        self.keep_mode = keep_mode
+
+        checkpoint = "agents/DDPG_pure_Hockey_50_m2000-eps0.3-t32-l0.0001-s1.pth"
+        #checkpoint = "../../agents/DDPG_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1-u20.0.pth"
+        env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
+        self.agent = DDPGAgent(env.observation_space, env.action_space)
+        self.agent.restore_state(torch.load(checkpoint, weights_only=True))
+
+    def act(self, obs):
+        action = self.agent.act(obs)
+        # print(f"DDPG Opponent action: {action}")
+        return action
+
+class TD3Opponent():
   def __init__(self, keep_mode=True):
-    self.keep_mode = keep_mode
+      self.keep_mode = keep_mode
 
-    # env_name = "RND_Hockey"
-    # alg = "pinkNoiseRND"
-    # eps = 0.1
-    # ts = 32
-    # lr = 0.0001
-    # s = None
-    # episodes = 2000
-
-    checkpoint = "../../agents/DDPG-default_pure_Hockey_50_m2000-eps0.1-t32-l0.0001-s1.pth"
-    #checkpoint = "../../agents/DDPG_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1-u20.0.pth"
-    env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
-    self.agent = DDPGAgent(env.observation_space, env.action_space)
-    self.agent.restore_state(torch.load(checkpoint, weights_only=True))
+      checkpoint = "agents/TD3_pure_Hockey_50_m2000-eps0.3-t32-l0.0001-s1.pth"
+      env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
+      self.agent = TD3(env.observation_space, env.action_space)
+      self.agent.restore_state(torch.load(checkpoint, weights_only=True))
 
   def act(self, obs):
-    action = self.agent.act(obs)
-    #print(f"DDPG Opponent action: {action}")
-    return action
+      action = self.agent.act(obs)
+      return action
 
 
 def main():
@@ -596,13 +601,17 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
+    checkpoint = "../agents/DDPG-default_RND_Hockey_200_m2000-eps0.3-t32-l0.0005-s1.pth"
     if pol == "TD3":
         # Initialize TD3 Agent
         agent = TD3(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                     update_target_every=opts.update_every, colNoise=act_pink)
+        #agent.restore_state(torch.load(checkpoint, weights_only=True))
     else:  # so pol=="DDPG" is default
         agent = DDPGAgent(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                           update_target_every=opts.update_every, colNoise=act_pink)
+        #agent.restore_state(torch.load(checkpoint, weights_only=True))
+
     
     opponent = h_env.BasicOpponent()
 
