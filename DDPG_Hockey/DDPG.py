@@ -592,7 +592,7 @@ def main():
                          dest='update_every', default=100,
                          help='number of episodes between target network updates (default %default)')
     optParser.add_option('-s', '--seed', action='store',  type='int',
-                         dest='seed', default=None,
+                         dest='seed', default=1,
                          help='random seed (default %default)')
     optParser.add_option('-a', '--algorithm', action='store', type='string',
                          dest='alg', default="pure",
@@ -617,7 +617,7 @@ def main():
     log_interval = 50           # print avg reward in the interval
     max_episodes = opts.max_episodes  # max training episodes
     max_timesteps = 2000         # max timesteps in one episode
-    num_games = 50               # games per episode (training after each episode)
+    num_games = 1                # games per episode (training after each episode)
     train_iter = opts.train      # update networks for given batched after every episode
     eps = opts.eps               # noise of DDPG policy
     lr = opts.lr                 # learning rate of DDPG policy
@@ -651,7 +651,7 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
-    # checkpoint = "../agents/DDPG-default_RND_Hockey_200_m2000-eps0.3-t32-l0.0005-s1.pth"
+    checkpoint = "results/DDPG_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
     if pol == "TD3":
         # Initialize TD3 Agent
         agent = TD3(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
@@ -660,15 +660,19 @@ def main():
     else:  # so pol=="DDPG" is default
         agent = DDPGAgent(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                           update_target_every=opts.update_every, colNoise=act_pink)
-        # agent.restore_state(torch.load(checkpoint, weights_only=True))
+        agent.restore_state(torch.load(checkpoint))#, weights_only=True))
 
-    opponent = h_env.BasicOpponent()
+    opponent = h_env.BasicOpponent(weak=False)  # without False weak opponent
 
     # logging variables
     rewards = []
     lengths = []
     losses = []
     # timestep = 0
+
+    # goal counter
+    player_1_goals = 0
+    player_2_goals = 0
 
     # RND variables
     counter = 1
@@ -686,10 +690,6 @@ def main():
         # RND counter
         if i_episode % 10 == 0:
             counter += 1
-
-        # goal counter
-        player_1_goals = 0
-        player_2_goals = 0
 
         for game in range(1, int(num_games) + 1):
             ob, _info = env.reset()
@@ -710,8 +710,6 @@ def main():
                     print(f"action basic opponent: {a2}")
                 (ob_new, reward, done, trunc, _info) = env.step(np.hstack([a1, a2]))
 
-                total_reward_of_game += reward
-
                 # RND exploration
                 if act_RND:
                     # Calculate the RND exploration bonus
@@ -723,7 +721,9 @@ def main():
                 ob = ob_new
                 obs_agent2 = env.obs_agent_two()
 
+                total_reward_of_game += reward
                 end_reward = reward
+
                 if done or trunc:
                     # print(_info)
                     if reward <= -10.0 or reward >= 10.0:
@@ -739,20 +739,20 @@ def main():
             # print(f"reward stored before game ended in game {game}/ {num_games} of
             # episode {i_episode}/ {max_episodes}: {reward}")
             # save to plot
-            rewards.append(end_reward)
+            rewards.append(total_reward_of_game)
             lengths.append(steps_per_game)
 
-            # logging
-            if game % log_interval == 0:
-                avg_reward_per_game = np.mean(rewards[-log_interval:])
-                avg_steps_per_game = int(np.mean(lengths[-log_interval:]))
+        # logging
+        if i_episode % log_interval == 0:
+            avg_reward_per_game = np.mean(rewards[-log_interval:])
+            avg_steps_per_game = int(np.mean(lengths[-log_interval:]))
 
-                print('Episode {}, {}/{} games played:\n \t avg length: {} \t avg reward per game: {}\n \t '
-                      'goals player 1: {} \t goals player 2: {}\n'
-                      .format(i_episode, game, num_games, avg_steps_per_game, avg_reward_per_game, player_1_goals,
-                              player_2_goals))
-                player_1_goals = 0
-                player_2_goals = 0
+            print('Episode {}, {}/{} games played:\n \t avg length: {} \t avg reward per game: {}\n \t '
+                  'goals player 1: {} \t goals player 2: {}\n'
+                  .format(i_episode, game, num_games, avg_steps_per_game, avg_reward_per_game, player_1_goals,
+                          player_2_goals))
+            player_1_goals = 0
+            player_2_goals = 0
 
         # RND training
         if act_RND:
@@ -762,7 +762,7 @@ def main():
         losses.extend(agent.train(train_iter))
 
         # save every 500 episodes
-        if i_episode % 50 == 0:
+        if i_episode % (10 * log_interval) == 0:
             print("########## Saving a checkpoint... ##########")
             torch.save(agent.state(), f'./results/{pol}_{alg}_{env_name}_{i_episode}_m{max_episodes}-eps{eps}'
                                       f'-t{train_iter}-l{lr}-s{random_seed}.pth')
