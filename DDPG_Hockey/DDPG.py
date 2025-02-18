@@ -684,7 +684,7 @@ def main():
     for i_episode in range(1, int(max_episodes)+1):
 
         # RND counter
-        if i_episode % 20 == 0:
+        if i_episode % 10 == 0:
             counter += 1
 
         # goal counter
@@ -730,9 +730,9 @@ def main():
                         if debug_mode:
                             print(f"last reward in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: "
                                   f"{reward}")
-                        if reward <= -45.0:
+                        if reward <= -10.0:
                             player_2_goals += 1
-                        if reward >= 45.0:
+                        if reward >= 10.0:
                             player_1_goals += 1
                     break
 
@@ -755,8 +755,9 @@ def main():
                 player_2_goals = 0
 
         # RND training
-        if i_episode % (1 * counter) == 0:
-            (rnd_states, rnd, rnd_optimizer) = rnd_training(rnd_states, rnd, rnd_optimizer)
+        if act_RND:
+            if i_episode % (1 * counter) == 0:
+                (rnd_states, rnd, rnd_optimizer) = rnd_training(rnd_states, rnd, rnd_optimizer)
 
         losses.extend(agent.train(train_iter))
 
