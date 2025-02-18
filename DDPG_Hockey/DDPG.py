@@ -16,8 +16,8 @@ import random  # for RND
 
 import memory as mem
 from feedforward import Feedforward
-#from . import memory as mem
-#from .feedforward import Feedforward
+# from . import memory as mem
+# from .feedforward import Feedforward
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.set_num_threads(1)
@@ -170,13 +170,63 @@ class RunningMeanStd:
         return (x - self.mean) / (np.sqrt(self.var) + 1e-8)
 
 
+def rnd_exploration(ob, reward, rnd_states, rnd):
+    rnd_bonus_stats = RunningMeanStd()
+    rnd_threshold = 0.05
+    rnd_scale = 2
+
+    s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
+    exploration_bonus = rnd.forward(s).item()
+    rnd_states.append(s)
+
+    rnd_bonus_stats.update([exploration_bonus])
+    normalized_bonus = rnd_bonus_stats.normalize(exploration_bonus)
+
+    if exploration_bonus > rnd_threshold:  # if state is unknown -> explore
+        reward += rnd_scale * normalized_bonus
+
+    # Limitation of the buffer size to avoid storage problems
+    if len(rnd_states) > 1000:
+        rnd_state_to_remove = random.choice(rnd_states)
+        rnd_states = [state for state in rnd_states if not (torch.equal(state, rnd_state_to_remove))]
+
+    return reward, rnd_states, rnd
+
+
+def rnd_training(rnd_states, rnd, rnd_optimizer):
+    batch_size_rnd = 32
+
+    # Training RND-Module batch-wise
+    if len(rnd_states) >= batch_size_rnd:
+        # Select states batch-wise
+        rnd_states.sort(key=lambda x: rnd.forward(x).item(), reverse=True)
+        states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(
+            device)  # train the most difficult states
+
+        # states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(device)
+        # Target and predictor
+        target_output = rnd.target(states_batch)
+        predicted_output = rnd.predictor(states_batch)
+        # RND loss and optimizer
+        # Different loss functions: L1Loss, MSELoss(), CrossEntropyLoss,
+        # see https://pytorch.org/docs/stable/nn.html
+        loss_rnd = nn.SmoothL1Loss()(predicted_output, target_output)
+        rnd_optimizer.zero_grad()
+        loss_rnd.backward()
+        rnd_optimizer.step()
+        # Delete from list
+        del rnd_states[:batch_size_rnd]
+
+    return rnd_states, rnd, rnd_optimizer
+
+
 class TD3():
     def __init__(self, observation_space, action_space, **userconfig):
         if not isinstance(observation_space, spaces.box.Box):
-            raise UnsupportedSpace('Observation space {} incompatible ' \
+            raise UnsupportedSpace('Observation space {} incompatible '
                                    'with {}. (Require: Box)'.format(observation_space, self))
         if not isinstance(action_space, spaces.box.Box):
-            raise UnsupportedSpace('Action space {} incompatible with {}.' \
+            raise UnsupportedSpace('Action space {} incompatible with {}.'
                                    ' (Require Box)'.format(action_space, self))
 
         self._observation_space = observation_space
@@ -286,11 +336,10 @@ class TD3():
         losses = []
         self.train_iter += 1
 
-        #if self.train_iter % self._config["update_target_every"] == 0:
+        # if self.train_iter % self._config["update_target_every"] == 0:
         #    self._copy_nets()
         if self._config["use_target_net"] and self.train_iter % self._config["update_target_every"] == 0:
             self._copy_nets()
-        
 
         for i in range(iter_fit):
             data = self.buffer.sample(batch=self._config['batch_size'])
@@ -307,15 +356,15 @@ class TD3():
             
                 # Generate noise for target policy smoothing
                 noise = (torch.randn_like(a) * self._config["policy_noise"]).clamp(-self._config["noise_clip"],
-                                                                                    self._config["noise_clip"])
+                                                                                   self._config["noise_clip"])
                 
                 # Compute the target action with added noise and clamp it within the action space bounds
                 a_prime = (self.policy_target(s_prime) + noise).clamp(torch.tensor(self.half_action_space.low),
-                                                                        torch.tensor(self.half_action_space.high))
+                                                                      torch.tensor(self.half_action_space.high))
                     
                 # Trick 1: Clipped Double-Q Learning.
-                # TD3 learns two Q-functions instead of one (hence “twin”), and uses the smaller of the two Q-values to form
-                # the targets in the Bellman error loss functions.
+                # TD3 learns two Q-functions instead of one (hence “twin”), and uses the smaller of the two Q-values to
+                # form the targets in the Bellman error loss functions.
                 # Compute the target Q-values using the target Q-networks
                 q1_prime = self.Q1_target.Q_value(s_prime, a_prime)
                 q2_prime = self.Q2_target.Q_value(s_prime, a_prime)
@@ -356,10 +405,10 @@ class DDPGAgent(object):
     def __init__(self, observation_space, action_space, **userconfig):
 
         if not isinstance(observation_space, spaces.box.Box):
-            raise UnsupportedSpace('Observation space {} incompatible ' \
+            raise UnsupportedSpace('Observation space {} incompatible '
                                    'with {}. (Require: Box)'.format(observation_space, self))
         if not isinstance(action_space, spaces.box.Box):
-            raise UnsupportedSpace('Action space {} incompatible with {}.' \
+            raise UnsupportedSpace('Action space {} incompatible with {}.'
                                    ' (Require Box)'.format(action_space, self))
 
         self._observation_space = observation_space
@@ -367,8 +416,8 @@ class DDPGAgent(object):
         self._action_n = int(action_space.shape[0] / 2)
         self._action_space = action_space
         self.half_action_space = spaces.Box(action_space.low[:self._action_n],
-                          action_space.high[:self._action_n],
-                          (self._action_n,), dtype=np.float32)
+                                            action_space.high[:self._action_n],
+                                            (self._action_n,), dtype=np.float32)
         self._config = {
             "eps": 0.1,            # Epsilon: noise strength to add to policy
             "discount": 0.95,
@@ -466,7 +515,7 @@ class DDPGAgent(object):
             rew = to_torch(np.stack(data[:, 2])[:, None])  # rew  (batchsize,1)
             s_prime = to_torch(np.stack(data[:, 3]))  # s_t+1
             done = to_torch(np.stack(data[:, 4])[:, None])  # done signal  (batchsize,1)
-            #print(f"s: {s.shape}\na: {a.shape}\nrew: {rew.shape}\ns_prime:{s_prime.shape}\ndone:{done.shape}")
+            # print(f"s: {s.shape}\na: {a.shape}\nrew: {rew.shape}\ns_prime:{s_prime.shape}\ndone:{done.shape}")
 
             if self._config["use_target_net"]:
                 q_prime = self.Q_target.Q_value(s_prime, self.policy_target.forward(s_prime))
@@ -497,7 +546,7 @@ class DDPGOpponent():
         self.keep_mode = keep_mode
 
         checkpoint = "agents/DDPG_pure_Hockey_50_m2000-eps0.3-t32-l0.0001-s1.pth"
-        #checkpoint = "../../agents/DDPG_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1-u20.0.pth"
+        # checkpoint = "../../agents/DDPG_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1-u20.0.pth"
         env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
         self.agent = DDPGAgent(env.observation_space, env.action_space)
         self.agent.restore_state(torch.load(checkpoint, weights_only=True))
@@ -506,6 +555,7 @@ class DDPGOpponent():
         action = self.agent.act(obs)
         # print(f"DDPG Opponent action: {action}")
         return action
+
 
 class TD3Opponent():
   def __init__(self, keep_mode=True):
@@ -558,12 +608,12 @@ def main():
     env_name = opts.env_name
     # creating environment
     if env_name == "LunarLander-v2":
-        env = gym.make(env_name, continuous = True)
+        env = gym.make(env_name, continuous=True)
     if env_name == "Hockey":
         env = h_env.HockeyEnv(verbose=debug_mode)
     else:
         env = gym.make(env_name)
-    render = False
+    # render = False
     log_interval = 50           # print avg reward in the interval
     max_episodes = opts.max_episodes  # max training episodes
     max_timesteps = 2000         # max timesteps in one episode
@@ -601,33 +651,28 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
-    checkpoint = "../agents/DDPG-default_RND_Hockey_200_m2000-eps0.3-t32-l0.0005-s1.pth"
+    # checkpoint = "../agents/DDPG-default_RND_Hockey_200_m2000-eps0.3-t32-l0.0005-s1.pth"
     if pol == "TD3":
         # Initialize TD3 Agent
         agent = TD3(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                     update_target_every=opts.update_every, colNoise=act_pink)
-        #agent.restore_state(torch.load(checkpoint, weights_only=True))
+        # agent.restore_state(torch.load(checkpoint, weights_only=True))
     else:  # so pol=="DDPG" is default
         agent = DDPGAgent(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                           update_target_every=opts.update_every, colNoise=act_pink)
-        #agent.restore_state(torch.load(checkpoint, weights_only=True))
+        # agent.restore_state(torch.load(checkpoint, weights_only=True))
 
-    
     opponent = h_env.BasicOpponent()
 
     # logging variables
     rewards = []
     lengths = []
     losses = []
-    timestep = 0
+    # timestep = 0
 
     # RND variables
     counter = 1
-    rnd_scale = 2
     rnd_states = []
-    batch_size_rnd = 32
-    rnd_bonus_stats = RunningMeanStd()
-    rnd_threshold = 0.05
 
     def save_statistics():
         with open(f"./results/{pol}_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}"
@@ -660,52 +705,17 @@ def main():
                 a1 = agent.act(ob)
                 a2 = opponent.act(obs_agent2)
 
-                if(debug_mode):
+                if debug_mode:
                     print(f"action agent: {a1}")
                     print(f"action basic opponent: {a2}")
                 (ob_new, reward, done, trunc, _info) = env.step(np.hstack([a1, a2]))
 
                 total_reward_of_game += reward
 
-                # RND
+                # RND exploration
                 if act_RND:
                     # Calculate the RND exploration bonus
-                    s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
-                    exploration_bonus = rnd.forward(s).item()
-                    rnd_states.append(s)
-
-                    rnd_bonus_stats.update([exploration_bonus])
-                    normalized_bonus = rnd_bonus_stats.normalize(exploration_bonus)
-
-                    if exploration_bonus > rnd_threshold:  # if state is unknown -> explore
-                        reward += rnd_scale * normalized_bonus
-
-                    # Limitation of the buffer size to avoid storage problems
-                    if len(rnd_states) > 1000:
-                        rnd_state_to_remove = random.choice(rnd_states)
-                        rnd_states = [state for state in rnd_states if not (torch.equal(state, rnd_state_to_remove))]
-
-                    if i_episode % (1 * counter) == 0:
-                        # Training RND-Module batch-wise
-                        if len(rnd_states) >= batch_size_rnd:
-                            # Select states batch-wise
-                            rnd_states.sort(key=lambda x: rnd.forward(x).item(), reverse=True)
-                            states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(
-                                device)  # train the most difficult states
-
-                            # states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(device)
-                            # Target and predictor
-                            target_output = rnd.target(states_batch)
-                            predicted_output = rnd.predictor(states_batch)
-                            # RND loss and optimizer
-                            # Different loss functions: L1Loss, MSELoss(), CrossEntropyLoss,
-                            # see https://pytorch.org/docs/stable/nn.html
-                            loss_rnd = nn.SmoothL1Loss()(predicted_output, target_output)
-                            rnd_optimizer.zero_grad()
-                            loss_rnd.backward()
-                            rnd_optimizer.step()
-                            # Delete from list
-                            del rnd_states[:batch_size_rnd]
+                    (reward, rnd_states, rnd) = rnd_exploration(ob, reward, rnd_states, rnd)
 
                 agent.store_transition((ob, a1, reward, ob_new, done))
                 if debug_mode:
@@ -715,18 +725,20 @@ def main():
 
                 end_reward = reward
                 if done or trunc:
-                    #print(_info)
+                    # print(_info)
                     if reward <= -10.0 or reward >= 10.0:
                         if debug_mode:
-                            print(f"last reward in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: {reward}")
-                        if reward <= -10.0:
-                            player_2_goals +=1
-                        if reward >= 10.0:
-                            player_1_goals +=1
+                            print(f"last reward in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: "
+                                  f"{reward}")
+                        if reward <= -45.0:
+                            player_2_goals += 1
+                        if reward >= 45.0:
+                            player_1_goals += 1
                     break
 
-            #print(f"reward stored before game ended in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: {reward}")
-            ## save to plot
+            # print(f"reward stored before game ended in game {game}/ {num_games} of
+            # episode {i_episode}/ {max_episodes}: {reward}")
+            # save to plot
             rewards.append(end_reward)
             lengths.append(steps_per_game)
 
@@ -735,10 +747,16 @@ def main():
                 avg_reward_per_game = np.mean(rewards[-log_interval:])
                 avg_steps_per_game = int(np.mean(lengths[-log_interval:]))
 
-                print('Episode {}, {}/{} games played:\n \t avg length: {} \t avg reward per game: {}\n \t goals player 1: {} \t goals player 2: {}\n'
-                      .format(i_episode, game, num_games, avg_steps_per_game, avg_reward_per_game, player_1_goals, player_2_goals))
+                print('Episode {}, {}/{} games played:\n \t avg length: {} \t avg reward per game: {}\n \t '
+                      'goals player 1: {} \t goals player 2: {}\n'
+                      .format(i_episode, game, num_games, avg_steps_per_game, avg_reward_per_game, player_1_goals,
+                              player_2_goals))
                 player_1_goals = 0
                 player_2_goals = 0
+
+        # RND training
+        if i_episode % (1 * counter) == 0:
+            (rnd_states, rnd, rnd_optimizer) = rnd_training(rnd_states, rnd, rnd_optimizer)
 
         losses.extend(agent.train(train_iter))
 
