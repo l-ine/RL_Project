@@ -2,7 +2,6 @@ import math
 import numpy as np
 
 import Box2D
-import torch
 # noinspection PyUnresolvedReferences
 from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener)
 
@@ -521,11 +520,11 @@ class HockeyEnv(gym.Env, EzPickle):
 
     if self.done:
       if self.winner == 0:  # tie
-        r -= 5
+        r += 0
       elif self.winner == 1:  # you won
-        r += 20
+        r += 10
       else:  # opponent won
-        r -= 20
+        r -= 10
     return float(r)
 
   # function that computes the reward returned to the agent, here with some reward shaping
@@ -535,15 +534,17 @@ class HockeyEnv(gym.Env, EzPickle):
     r += info["reward_closeness_to_puck"]
     r += info["reward_touch_puck"]
     r += info["reward_puck_direction"]
-    r += 2*info["reward_same_y"]
+    #r += info["reward_goal_direction"]*5
+    #r += info["reward_same_y"]*0.2
     return float(r)
 
   def get_reward_agent_two(self, info_two):
-    r = self._compute_reward()
+    r = - self._compute_reward()
     r += info_two["reward_closeness_to_puck"]
     r += info_two["reward_touch_puck"]
     r += info_two["reward_puck_direction"]
-    r += 2*info_two["reward_same_y"]
+    #r += info_two["reward_goal_direction"]
+    #r += info_two["reward_same_y"]
     return float(r)
 
   def _get_info(self):
@@ -558,8 +559,18 @@ class HockeyEnv(gym.Env, EzPickle):
       reward_closeness_to_puck += dist_to_puck * factor  # Proxy reward for being close to puck in the own half
     # Proxy reward: touch puck
     reward_touch_puck = 0.
+    reward_goal_direction = 0.
+
     if self.player1_has_puck == MAX_TIME_KEEP_PUCK:
       reward_touch_puck = 1.
+      
+      # reward for shooting towards goal
+      alpha1 = np.arctan(((self.goal_player_2.position[1] - 0.5) - self.player1.position[1]) / (self.goal_player_2.position[0] - self.player1.position[0]))
+      alpha2 = np.arctan(((self.goal_player_2.position[1] + 0.5) - self.player1.position[1]) / (self.goal_player_2.position[0] - self.player1.position[0]))
+
+      if (self.player1.angle <= alpha2) and (self.player1.angle >= alpha1):
+        reward_goal_direction = 1.
+      
 
     # puck is flying in the right direction
     max_reward = 1.
@@ -572,13 +583,25 @@ class HockeyEnv(gym.Env, EzPickle):
     max_y_dist = 1.0  # Define a reasonable max distance for scaling the reward
     reward_same_y = max_y_reward * (1 - min(y_diff / max_y_dist, 1))  # Linearly scaled reward
 
-
+    #if reward_touch_puck == 1:
+    #  if (self.player1.angle <= alpha2) and (self.player1.angle >= alpha1):
+    #    print("\nPlayer x:", self.player1.position[0],
+    #          "\nPlayer y:", self.player1.position[1],
+    #          "\nGoal x:", self.goal_player_2.position[0],
+    #          "\nGoal y:", self.goal_player_2.position[1],
+    #          "\nDis to goal x:", (self.goal_player_2.position[0] - self.player1.position[0]),
+    #          "\nDis to goal upper y:", ((self.goal_player_2.position[1] + 0.5) - self.player1.position[1]),
+    #          "\nDis to goal lower y:", ((self.goal_player_2.position[1] - 0.5) - self.player1.position[1]),
+    #          "\nAngle to goal upper y:", alpha2,
+    #          "\nAngle to goal lower y:", alpha1,
+    #          "\nActual angle of agent:", self.player1.angle)
 
     return {"winner": self.winner,
             "reward_closeness_to_puck": float(reward_closeness_to_puck),
             "reward_touch_puck": float(reward_touch_puck),
-            "reward_puck_direction": float(reward_puck_direction),
-            "reward_same_y": float(reward_same_y)
+            "reward_puck_direction": float(reward_puck_direction)
+            #"reward_goal_direction": float(reward_goal_direction),
+            #"reward_same_y": float(reward_same_y),
             }
 
   def get_info_agent_two(self):
@@ -592,6 +615,7 @@ class HockeyEnv(gym.Env, EzPickle):
       reward_closeness_to_puck += dist_to_puck * factor  # Proxy reward for being close to puck in the own half
     # Proxy reward: touch puck
     reward_touch_puck = 0.
+    reward_goal_direction = 0.
     if self.player2_has_puck == MAX_TIME_KEEP_PUCK:
       reward_touch_puck = 1.
 
@@ -604,6 +628,7 @@ class HockeyEnv(gym.Env, EzPickle):
             "reward_closeness_to_puck": float(reward_closeness_to_puck),
             "reward_touch_puck": float(reward_touch_puck),
             "reward_puck_direction": float(reward_puck_direction),
+            "reward_goal_direction": float(reward_goal_direction)
             }
 
 
@@ -700,6 +725,7 @@ class HockeyEnv(gym.Env, EzPickle):
 
     info = self._get_info()
     reward = self.get_reward(info)
+    #print(info)
 
     self.closest_to_goal_dist = min(self.closest_to_goal_dist,
                                     dist_positions(self.puck.position, (W, H / 2)))
@@ -841,9 +867,9 @@ class BasicOpponent():
 
     action = np.clip(error * [kp, kp / 5, kp / 2] - v1 * need_break * [kd, kd, kd], -1, 1)
     if self.keep_mode:
-      action = np.hstack([action, [shoot]])
-    #print(f"BasicOpponent action: {action}")
-    return action
+      return np.hstack([action, [shoot]])
+    else:
+      return action
 
 
 class HumanOpponent():
