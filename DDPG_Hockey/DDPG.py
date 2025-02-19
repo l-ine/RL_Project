@@ -545,16 +545,19 @@ class DDPGOpponent():
     def __init__(self, keep_mode=True):
         self.keep_mode = keep_mode
 
-        checkpoint = "agents/DDPG_pure_Hockey_50_m2000-eps0.3-t32-l0.0001-s1.pth"
+        self.checkpoint = "agents/Less_defensive_DDPG-default_pure_Hockey_1500_m5000.0-eps0.3-t32-l0.0005-s1.pth"
         # checkpoint = "../../agents/DDPG_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1-u20.0.pth"
         env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
         self.agent = DDPGAgent(env.observation_space, env.action_space)
-        self.agent.restore_state(torch.load(checkpoint, weights_only=True))
+        self.agent.restore_state(torch.load(self.checkpoint, weights_only=True))
 
     def act(self, obs):
         action = self.agent.act(obs)
         # print(f"DDPG Opponent action: {action}")
         return action
+
+    def get_checkpoint(self):
+        return self.checkpoint
 
 
 class TD3Opponent():
@@ -651,18 +654,30 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
-    checkpoint = "results/DDPG_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
+    checkpoint_agent = "results/YReward_DDPG-default_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
+
     if pol == "TD3":
         # Initialize TD3 Agent
         agent = TD3(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                     update_target_every=opts.update_every, colNoise=act_pink)
-        # agent.restore_state(torch.load(checkpoint, weights_only=True))
+        # agent.restore_state(torch.load(checkpoint_agent, weights_only=True))
     else:  # so pol=="DDPG" is default
         agent = DDPGAgent(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                           update_target_every=opts.update_every, colNoise=act_pink)
-        agent.restore_state(torch.load(checkpoint))#, weights_only=True))
+        agent.restore_state(torch.load(checkpoint_agent, weights_only=True))
 
-    opponent = h_env.BasicOpponent(weak=False)  # without False weak opponent
+    opponent_who = "weak" # "strong" "trained agent"
+    print(f"opponent: {opponent_who}")
+
+    if opponent_who == "weak":
+        opponent = h_env.BasicOpponent(weak=True)
+    elif opponent_who == "strong":
+        opponent = h_env.BasicOpponent(weak=False)
+    elif opponent_who == "trained agent":
+        opponent = DDPGOpponent()
+        print(f"opponent checkpoint: {opponent.get_checkpoint()}")
+    else:
+        raise Exception("wrong opponent type")
 
     # logging variables
     rewards = []
@@ -679,7 +694,7 @@ def main():
     rnd_states = []
 
     def save_statistics():
-        with open(f"./results/{pol}_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}"
+        with open(f"./results/Less_defensive_{pol}_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}"
                   f"-stat.pkl", 'wb') as f:
             pickle.dump({"rewards": rewards, "lengths": lengths, "eps": eps, "train": train_iter,
                          "lr": lr, "update_every": opts.update_every, "losses": losses}, f)
@@ -764,7 +779,7 @@ def main():
         # save every 500 episodes
         if i_episode % (10 * log_interval) == 0:
             print("########## Saving a checkpoint... ##########")
-            torch.save(agent.state(), f'./results/{pol}_{alg}_{env_name}_{i_episode}_m{max_episodes}-eps{eps}'
+            torch.save(agent.state(), f'./results/Less_defensive_{pol}_{alg}_{env_name}_{i_episode}_m{max_episodes}-eps{eps}'
                                       f'-t{train_iter}-l{lr}-s{random_seed}.pth')
             save_statistics()
 
