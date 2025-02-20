@@ -172,8 +172,6 @@ class RunningMeanStd:
 
 def rnd_exploration(ob, reward, rnd_states, rnd):
     rnd_bonus_stats = RunningMeanStd()
-    rnd_threshold = 0.05
-    rnd_scale = 2
 
     s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
     exploration_bonus = rnd.forward(s).item()
@@ -181,9 +179,10 @@ def rnd_exploration(ob, reward, rnd_states, rnd):
 
     rnd_bonus_stats.update([exploration_bonus])
     normalized_bonus = rnd_bonus_stats.normalize(exploration_bonus)
+    rnd_threshold = rnd_bonus_stats.mean + 0.5 * np.sqrt(rnd_bonus_stats.var)
 
     if exploration_bonus > rnd_threshold:  # if state is unknown -> explore
-        reward += rnd_scale * normalized_bonus
+        reward += normalized_bonus
 
     # Limitation of the buffer size to avoid storage problems
     if len(rnd_states) > 1000:
@@ -545,7 +544,7 @@ class DDPGOpponent():
     def __init__(self, keep_mode=True):
         self.keep_mode = keep_mode
 
-        checkpoint = "results/DDPG_pure_Hockey_400_m400.0-eps0.3-t32-l0.0005-s1.pth"
+        checkpoint = "results/DDPG_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
         # checkpoint = "../../agents/DDPG_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1-u20.0.pth"
         env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
         self.agent = DDPGAgent(env.observation_space, env.action_space)
@@ -651,7 +650,7 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
-    checkpoint = "results/5000weak5000strong/DDPG_pure_Hockey_5000_m5001.0-eps0.3-t32-l0.0005-s1.pth"
+    checkpoint = "results/5000strong/DDPG_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
     if pol == "TD3":
         # Initialize TD3 Agent
         agent = TD3(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
@@ -662,7 +661,7 @@ def main():
                           update_target_every=opts.update_every, colNoise=act_pink)
         agent.restore_state(torch.load(checkpoint))#, weights_only=True))
 
-    opponent = h_env.BasicOpponent(weak=True)  # without False weak opponent
+    opponent = h_env.BasicOpponent(weak=False)  # False = strong opponent
 
     # logging variables
     rewards = []
@@ -690,7 +689,7 @@ def main():
         episode_transitions = []
 
         # RND counter
-        if i_episode % 10 == 0:
+        if i_episode % (int(max_episodes) / 10) == 0:
             counter += 1
 
         for game in range(1, int(num_games) + 1):
@@ -739,6 +738,8 @@ def main():
                             ob_saved, a1_saved, r_saved, ob_new_saved, d_saved = episode_transitions[i]
                             adjusted_reward = r_saved + goal_reward * (discount_factor ** (len(episode_transitions) - 1 - i))
                             agent.store_transition((ob_saved, a1_saved, adjusted_reward, ob_new_saved, d_saved))
+                        #for transition in episode_transitions:
+                        #    agent.store_transition(transition)
                     elif reward <= -10.0:
                         player_2_goals += 1
                         discount_factor = 0.95
@@ -747,7 +748,16 @@ def main():
                             ob_saved, a1_saved, r_saved, ob_new_saved, d_saved = episode_transitions[i]
                             adjusted_reward = r_saved + goal_reward * (discount_factor ** (len(episode_transitions) - 1 - i))
                             agent.store_transition((ob_saved, a1_saved, adjusted_reward, ob_new_saved, d_saved))
+                        #for transition in episode_transitions:
+                        #    agent.store_transition(transition)
                     else:
+                        #discount_factor = 0.95
+                        #no_goal_reward = -4.0
+                        #for i in range(len(episode_transitions) - 1, -1, -1):
+                        #    ob_saved, a1_saved, r_saved, ob_new_saved, d_saved = episode_transitions[i]
+                        #    adjusted_reward = r_saved + no_goal_reward * (
+                        #                discount_factor ** (len(episode_transitions) - 1 - i))
+                        #    agent.store_transition((ob_saved, a1_saved, adjusted_reward, ob_new_saved, d_saved))
                         for transition in episode_transitions:
                             agent.store_transition(transition)
                     if debug_mode:
