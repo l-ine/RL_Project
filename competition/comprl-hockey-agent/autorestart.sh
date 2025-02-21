@@ -18,12 +18,12 @@ THRESHOLD=10
 
 # If you set a topic name here, restart notifications will be sent to
 # ntfy.sh/$NFTY_TOPIC (so you can more easily monitor if there are problems).
-NTFY_TOPIC=
+NTFY_TOPIC=NIKITUEBI
 
 # You may set the server information here, then you don't need to pass it as
 # argument.
-# export COMPRL_SERVER_URL=<URL>
-# export COMPRL_SERVER_PORT=<PORT>
+export COMPRL_SERVER_URL=comprl.cs.uni-tuebingen.de
+export COMPRL_SERVER_PORT=65335
 # export COMPRL_ACCESS_TOKEN=<YOUR ACCESS TOKEN>
 
 # Array to hold timestamps of terminations
@@ -31,7 +31,7 @@ termination_times=()
 
 while true; do
     # Run the command foobar
-    python3 ./run_client.py "$@"
+    python ./run_client.py "$@"
 
     # Get the current timestamp
     current_time=$(date +%s)
