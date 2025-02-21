@@ -167,26 +167,24 @@ class RunningMeanStd:
     def normalize(self, x):
         return (x - self.mean) / (np.sqrt(self.var) + 1e-8)
 
-def rnd_exploration(ob, reward, rnd_states, rnd):
-    rnd_bonus_stats = RunningMeanStd()
-
+def rnd_exploration(ob, reward, rnd_states, rnd, rnd_threshold):
     s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
     exploration_bonus = rnd.forward(s).item()
     rnd_states.append(s)
 
-    rnd_bonus_stats.update([exploration_bonus])
-    normalized_bonus = rnd_bonus_stats.normalize(exploration_bonus)
-    rnd_threshold = rnd_bonus_stats.mean + 0.5 * np.sqrt(rnd_bonus_stats.var)
-
-    if exploration_bonus > rnd_threshold:  # if state is unknown -> explore
-        reward += normalized_bonus
+    if exploration_bonus > np.mean(rnd_threshold):  # if state is unknown -> explore
+        reward += exploration_bonus * 0.2
+        rnd_threshold.append(exploration_bonus)
 
     # Limitation of the buffer size to avoid storage problems
+    if len(rnd_threshold) > 1000:
+        del rnd_threshold[:100]
     if len(rnd_states) > 1000:
         rnd_state_to_remove = random.choice(rnd_states)
         rnd_states = [state for state in rnd_states if not (torch.equal(state, rnd_state_to_remove))]
 
-    return reward, rnd_states, rnd
+    return reward, rnd_states, rnd, rnd_threshold
+
 
 def rnd_training(rnd_states, rnd, rnd_optimizer):
     batch_size_rnd = 32
@@ -634,6 +632,8 @@ def main():
     # training loop
     for i_episode in range(1, int(max_episodes)+1):
 
+        rnd_threshold = [0]
+
         # RND counter
         if i_episode % (int(max_episodes) / 10) == 0:
             counter += 1
@@ -650,7 +650,7 @@ def main():
             # RND exploration
             if act_RND:
                 # Calculate the RND exploration bonus
-                (reward, rnd_states, rnd) = rnd_exploration(ob, reward, rnd_states, rnd)
+                (reward, rnd_states, rnd, rnd_threshold) = rnd_exploration(ob, reward, rnd_states, rnd, rnd_threshold)
 
             total_reward += reward
 
