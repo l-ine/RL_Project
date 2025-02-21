@@ -573,6 +573,8 @@ def main():
                          help='policy /strategy (DDPG or TD3) (default %default)')
     optParser.add_option('-d', '--debug', action='store_true', dest='debug_mode',
                          default=False, help='debug mode for more insight (default %default)')
+    optParser.add_option('-o', '--opponent', action='store', dest='opp',
+                         default="strong", help='opponents mode (strong, weak, switch), (default %default)')
     opts, args = optParser.parse_args()
     # ############# Hyperparameters ##############
     debug_mode = opts.debug_mode
@@ -595,6 +597,7 @@ def main():
     random_seed = opts.seed
     alg = opts.alg               # modification of algorithm
     pol = opts.pol               # policy/strategy
+    opp = opts.opp               # weak, strong or switching opponents
 
     # activate modifications
     if alg == "pure":
@@ -634,7 +637,16 @@ def main():
                           update_target_every=opts.update_every, colNoise=act_pink)
         #agent.restore_state(torch.load(checkpoint))#, weights_only=True))
 
-    opponent = h_env.BasicOpponent(weak=False)  # False = strong opponent
+    # Initialize basic opponent
+    if opp == "switch":
+        opponent_weak = h_env.BasicOpponent(weak=True)  # True = weak opponent
+        opponent_strong = h_env.BasicOpponent(weak=False)  # False = strong opponent
+    elif opp == "weak":
+        opponent = h_env.BasicOpponent(weak=True)  # True = weak opponent
+    elif opp == "strong":
+        opponent = h_env.BasicOpponent(weak=False)  # False = strong opponent
+    else:
+        raise ValueError("Unknown opponent mode")
 
     # logging variables
     rewards = []
@@ -651,7 +663,7 @@ def main():
     rnd_states = []
 
     def save_statistics():
-        with open(f"./results/{pol}_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}"
+        with open(f"./results/{pol}_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}-o{opp}"
                   f"-stat.pkl", 'wb') as f:
             pickle.dump({"rewards": rewards, "lengths": lengths, "eps": eps, "train": train_iter,
                          "lr": lr, "update_every": opts.update_every, "losses": losses}, f)
@@ -667,6 +679,15 @@ def main():
             counter += 1
 
         for game in range(1, int(num_games) + 1):
+
+            if opp == "switch":
+                if game % 2 == 0:
+                    opponent = opponent_weak
+                else:
+                    opponent = opponent_strong
+            else:
+                opponent = opponent
+
             ob, _info = env.reset()
             obs_agent2 = env.obs_agent_two()
             agent.reset()
@@ -768,7 +789,7 @@ def main():
         if i_episode % (10 * log_interval) == 0:
             print("########## Saving a checkpoint... ##########")
             torch.save(agent.state(), f'./results/{pol}_{alg}_{env_name}_{i_episode}_m{max_episodes}-eps{eps}'
-                                      f'-t{train_iter}-l{lr}-s{random_seed}.pth')
+                                      f'-t{train_iter}-l{lr}-s{random_seed}-o{opp}.pth')
             save_statistics()
 
     save_statistics()
