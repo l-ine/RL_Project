@@ -145,51 +145,23 @@ class RNDModule(nn.Module):
         return exploration_bonus
 
 
-# Normalization class for RND
-class RunningMeanStd:
-    def __init__(self, epsilon=1e-4):
-        self.mean = 0.0
-        self.var = 1.0
-        self.count = epsilon
-
-    def update(self, x):
-        batch_mean = np.mean(x)
-        batch_var = np.var(x)
-        batch_count = len(x)
-
-        delta = batch_mean - self.mean
-        total_count = self.count + batch_count
-
-        new_mean = self.mean + delta * batch_count / total_count
-        new_var = (self.count * self.var + batch_count * batch_var +
-                   delta**2 * self.count * batch_count / total_count) / total_count
-
-        self.mean, self.var, self.count = new_mean, new_var, total_count
-
-    def normalize(self, x):
-        return (x - self.mean) / (np.sqrt(self.var) + 1e-8)
-
-
-def rnd_exploration(ob, reward, rnd_states, rnd):
-    rnd_bonus_stats = RunningMeanStd()
-
+def rnd_exploration(ob, reward, rnd_states, rnd, rnd_threshold):
     s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
     exploration_bonus = rnd.forward(s).item()
     rnd_states.append(s)
 
-    rnd_bonus_stats.update([exploration_bonus])
-    normalized_bonus = rnd_bonus_stats.normalize(exploration_bonus)
-    rnd_threshold = rnd_bonus_stats.mean + 0.5 * np.sqrt(rnd_bonus_stats.var)
-
-    if exploration_bonus > rnd_threshold:  # if state is unknown -> explore
-        reward += normalized_bonus
+    if exploration_bonus > np.mean(rnd_threshold):  # if state is unknown -> explore
+        reward += exploration_bonus * 0.2
+        rnd_threshold.append(exploration_bonus)
 
     # Limitation of the buffer size to avoid storage problems
+    if len(rnd_threshold) > 1000:
+        del rnd_threshold[:100]
     if len(rnd_states) > 1000:
         rnd_state_to_remove = random.choice(rnd_states)
         rnd_states = [state for state in rnd_states if not (torch.equal(state, rnd_state_to_remove))]
 
-    return reward, rnd_states, rnd
+    return reward, rnd_states, rnd, rnd_threshold
 
 
 def rnd_training(rnd_states, rnd, rnd_optimizer):
@@ -650,16 +622,17 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
-    checkpoint = "results/5000strong/DDPG_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
+    #checkpoint = "results/TD3_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1.pth"
     if pol == "TD3":
         # Initialize TD3 Agent
         agent = TD3(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                     update_target_every=opts.update_every, colNoise=act_pink)
-        # agent.restore_state(torch.load(checkpoint, weights_only=True))
+
+        #agent.restore_state(torch.load(checkpoint))#, weights_only=True))
     else:  # so pol=="DDPG" is default
         agent = DDPGAgent(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                           update_target_every=opts.update_every, colNoise=act_pink)
-        agent.restore_state(torch.load(checkpoint))#, weights_only=True))
+        #agent.restore_state(torch.load(checkpoint))#, weights_only=True))
 
     opponent = h_env.BasicOpponent(weak=False)  # False = strong opponent
 
@@ -687,6 +660,7 @@ def main():
     for i_episode in range(1, int(max_episodes)+1):
 
         episode_transitions = []
+        rnd_threshold = [0]
 
         # RND counter
         if i_episode % (int(max_episodes) / 10) == 0:
@@ -716,7 +690,7 @@ def main():
                 # RND exploration
                 if act_RND:
                     # Calculate the RND exploration bonus
-                    (reward, rnd_states, rnd) = rnd_exploration(ob, reward, rnd_states, rnd)
+                    (reward, rnd_states, rnd, rnd_threshold) = rnd_exploration(ob, reward, rnd_states, rnd, rnd_threshold)
 
                 episode_transitions.append((ob, a1, reward, ob_new, done))
                 # agent.store_transition((ob, a1, reward, ob_new, done))
