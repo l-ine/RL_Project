@@ -172,8 +172,6 @@ class RunningMeanStd:
 
 def rnd_exploration(ob, reward, rnd_states, rnd):
     rnd_bonus_stats = RunningMeanStd()
-    rnd_threshold = 0.05
-    rnd_scale = 2
 
     s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
     exploration_bonus = rnd.forward(s).item()
@@ -181,9 +179,10 @@ def rnd_exploration(ob, reward, rnd_states, rnd):
 
     rnd_bonus_stats.update([exploration_bonus])
     normalized_bonus = rnd_bonus_stats.normalize(exploration_bonus)
+    rnd_threshold = rnd_bonus_stats.mean + 0.5 * np.sqrt(rnd_bonus_stats.var)
 
     if exploration_bonus > rnd_threshold:  # if state is unknown -> explore
-        reward += rnd_scale * normalized_bonus
+        reward += normalized_bonus
 
     # Limitation of the buffer size to avoid storage problems
     if len(rnd_states) > 1000:
@@ -545,19 +544,16 @@ class DDPGOpponent():
     def __init__(self, keep_mode=True):
         self.keep_mode = keep_mode
 
-        self.checkpoint = "agents/Less_defensive_DDPG-default_pure_Hockey_1500_m5000.0-eps0.3-t32-l0.0005-s1.pth"
+        checkpoint = "results/DDPG_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
         # checkpoint = "../../agents/DDPG_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1-u20.0.pth"
         env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
         self.agent = DDPGAgent(env.observation_space, env.action_space)
-        self.agent.restore_state(torch.load(self.checkpoint, weights_only=True))
+        self.agent.restore_state(torch.load(checkpoint))  #, weights_only=True))
 
     def act(self, obs):
         action = self.agent.act(obs)
         # print(f"DDPG Opponent action: {action}")
         return action
-
-    def get_checkpoint(self):
-        return self.checkpoint
 
 
 class TD3Opponent():
@@ -654,30 +650,18 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
-    checkpoint_agent = "results/YReward_DDPG-default_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
-
+    checkpoint = "results/5000strong/DDPG_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
     if pol == "TD3":
         # Initialize TD3 Agent
         agent = TD3(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                     update_target_every=opts.update_every, colNoise=act_pink)
-        # agent.restore_state(torch.load(checkpoint_agent, weights_only=True))
+        # agent.restore_state(torch.load(checkpoint, weights_only=True))
     else:  # so pol=="DDPG" is default
         agent = DDPGAgent(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                           update_target_every=opts.update_every, colNoise=act_pink)
-        agent.restore_state(torch.load(checkpoint_agent, weights_only=True))
+        agent.restore_state(torch.load(checkpoint))#, weights_only=True))
 
-    opponent_who = "weak" # "strong" "trained agent"
-    print(f"opponent: {opponent_who}")
-
-    if opponent_who == "weak":
-        opponent = h_env.BasicOpponent(weak=True)
-    elif opponent_who == "strong":
-        opponent = h_env.BasicOpponent(weak=False)
-    elif opponent_who == "trained agent":
-        opponent = DDPGOpponent()
-        print(f"opponent checkpoint: {opponent.get_checkpoint()}")
-    else:
-        raise Exception("wrong opponent type")
+    opponent = h_env.BasicOpponent(weak=False)  # False = strong opponent
 
     # logging variables
     rewards = []
@@ -694,7 +678,7 @@ def main():
     rnd_states = []
 
     def save_statistics():
-        with open(f"./results/Less_defensive_{pol}_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}"
+        with open(f"./results/{pol}_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}"
                   f"-stat.pkl", 'wb') as f:
             pickle.dump({"rewards": rewards, "lengths": lengths, "eps": eps, "train": train_iter,
                          "lr": lr, "update_every": opts.update_every, "losses": losses}, f)
@@ -702,8 +686,10 @@ def main():
     # training loop
     for i_episode in range(1, int(max_episodes)+1):
 
+        episode_transitions = []
+
         # RND counter
-        if i_episode % 10 == 0:
+        if i_episode % (int(max_episodes) / 10) == 0:
             counter += 1
 
         for game in range(1, int(num_games) + 1):
@@ -714,6 +700,8 @@ def main():
             total_reward_of_game = 0
             end_reward = 0
             steps_per_game = 0
+            episode_transitions.clear()
+
             for t in range(int(max_timesteps)):
                 steps_per_game += 1
 
@@ -730,7 +718,8 @@ def main():
                     # Calculate the RND exploration bonus
                     (reward, rnd_states, rnd) = rnd_exploration(ob, reward, rnd_states, rnd)
 
-                agent.store_transition((ob, a1, reward, ob_new, done))
+                episode_transitions.append((ob, a1, reward, ob_new, done))
+                # agent.store_transition((ob, a1, reward, ob_new, done))
                 if debug_mode:
                     print(f"reward stored: {reward}")
                 ob = ob_new
@@ -741,14 +730,39 @@ def main():
 
                 if done or trunc:
                     # print(_info)
-                    if reward <= -10.0 or reward >= 10.0:
-                        if debug_mode:
-                            print(f"last reward in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: "
-                                  f"{reward}")
-                        if reward <= -10.0:
-                            player_2_goals += 1
-                        if reward >= 10.0:
-                            player_1_goals += 1
+                    if reward >= 10.0:
+                        player_1_goals += 1
+                        discount_factor = 0.95
+                        goal_reward = 10.0
+                        for i in range(len(episode_transitions) - 1, -1, -1):
+                            ob_saved, a1_saved, r_saved, ob_new_saved, d_saved = episode_transitions[i]
+                            adjusted_reward = r_saved + goal_reward * (discount_factor ** (len(episode_transitions) - 1 - i))
+                            agent.store_transition((ob_saved, a1_saved, adjusted_reward, ob_new_saved, d_saved))
+                        #for transition in episode_transitions:
+                        #    agent.store_transition(transition)
+                    elif reward <= -10.0:
+                        player_2_goals += 1
+                        discount_factor = 0.95
+                        goal_reward = -10.0
+                        for i in range(len(episode_transitions) - 1, -1, -1):
+                            ob_saved, a1_saved, r_saved, ob_new_saved, d_saved = episode_transitions[i]
+                            adjusted_reward = r_saved + goal_reward * (discount_factor ** (len(episode_transitions) - 1 - i))
+                            agent.store_transition((ob_saved, a1_saved, adjusted_reward, ob_new_saved, d_saved))
+                        #for transition in episode_transitions:
+                        #    agent.store_transition(transition)
+                    else:
+                        #discount_factor = 0.95
+                        #no_goal_reward = -4.0
+                        #for i in range(len(episode_transitions) - 1, -1, -1):
+                        #    ob_saved, a1_saved, r_saved, ob_new_saved, d_saved = episode_transitions[i]
+                        #    adjusted_reward = r_saved + no_goal_reward * (
+                        #                discount_factor ** (len(episode_transitions) - 1 - i))
+                        #    agent.store_transition((ob_saved, a1_saved, adjusted_reward, ob_new_saved, d_saved))
+                        for transition in episode_transitions:
+                            agent.store_transition(transition)
+                    if debug_mode:
+                        print(f"last reward in game {game}/ {num_games} of episode {i_episode}/ {max_episodes}: "
+                              f"{reward}")
                     break
 
             # print(f"reward stored before game ended in game {game}/ {num_games} of
@@ -779,7 +793,7 @@ def main():
         # save every 500 episodes
         if i_episode % (10 * log_interval) == 0:
             print("########## Saving a checkpoint... ##########")
-            torch.save(agent.state(), f'./results/Less_defensive_{pol}_{alg}_{env_name}_{i_episode}_m{max_episodes}-eps{eps}'
+            torch.save(agent.state(), f'./results/{pol}_{alg}_{env_name}_{i_episode}_m{max_episodes}-eps{eps}'
                                       f'-t{train_iter}-l{lr}-s{random_seed}.pth')
             save_statistics()
 
