@@ -6,6 +6,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import optparse
 import pickle
+import random  # for RND
 
 # from pink import PinkActionNoise
 # install with pip install pink-noise-rl
@@ -133,13 +134,87 @@ class RNDModule(nn.Module):
         self.predictor = Feedforward(input_dim, hidden_sizes, output_dim)
         self.target = Feedforward(input_dim, hidden_sizes, output_dim)
         for param in self.target.parameters():
-            param.requires_grad = False  # Target network is fixed
+            param.requires_grad = False
 
     def forward(self, state):
         target_output = self.target(state)
         predicted_output = self.predictor(state)
         exploration_bonus = ((target_output - predicted_output) ** 2).mean()
         return exploration_bonus
+
+
+# Normalization class for RND
+class RunningMeanStd:
+    def __init__(self, epsilon=1e-4):
+        self.mean = 0.0
+        self.var = 1.0
+        self.count = epsilon
+
+    def update(self, x):
+        batch_mean = np.mean(x)
+        batch_var = np.var(x)
+        batch_count = len(x)
+
+        delta = batch_mean - self.mean
+        total_count = self.count + batch_count
+
+        new_mean = self.mean + delta * batch_count / total_count
+        new_var = (self.count * self.var + batch_count * batch_var +
+                   delta**2 * self.count * batch_count / total_count) / total_count
+
+        self.mean, self.var, self.count = new_mean, new_var, total_count
+
+    def normalize(self, x):
+        return (x - self.mean) / (np.sqrt(self.var) + 1e-8)
+
+def rnd_exploration(ob, reward, rnd_states, rnd):
+    rnd_bonus_stats = RunningMeanStd()
+
+    s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
+    exploration_bonus = rnd.forward(s).item()
+    rnd_states.append(s)
+
+    rnd_bonus_stats.update([exploration_bonus])
+    normalized_bonus = rnd_bonus_stats.normalize(exploration_bonus)
+    rnd_threshold = rnd_bonus_stats.mean + 0.5 * np.sqrt(rnd_bonus_stats.var)
+
+    if exploration_bonus > rnd_threshold:  # if state is unknown -> explore
+        reward += normalized_bonus
+
+    # Limitation of the buffer size to avoid storage problems
+    if len(rnd_states) > 1000:
+        rnd_state_to_remove = random.choice(rnd_states)
+        rnd_states = [state for state in rnd_states if not (torch.equal(state, rnd_state_to_remove))]
+
+    return reward, rnd_states, rnd
+
+def rnd_training(rnd_states, rnd, rnd_optimizer):
+    batch_size_rnd = 32
+
+    # Training RND-Module batch-wise
+    if len(rnd_states) >= batch_size_rnd:
+        # Select states batch-wise
+        rnd_states.sort(key=lambda x: rnd.forward(x).item(), reverse=True)
+        states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(
+            device)  # train the most difficult states
+
+        # states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(device)
+        # Target and predictor
+        target_output = rnd.target(states_batch)
+        predicted_output = rnd.predictor(states_batch)
+        # RND loss and optimizer
+        # Different loss functions: L1Loss, MSELoss(), CrossEntropyLoss,
+        # see https://pytorch.org/docs/stable/nn.html
+        loss_rnd = nn.SmoothL1Loss()(predicted_output, target_output)
+        rnd_optimizer.zero_grad()
+        loss_rnd.backward()
+        rnd_optimizer.step()
+        # Delete from list
+        del rnd_states[:batch_size_rnd]
+
+    return rnd_states, rnd, rnd_optimizer
+
+
 
 
 class TD3():
@@ -505,24 +580,26 @@ def main():
     alg = opts.alg               # modification of algorithm
 
     # activate modifications
-    if alg == "DDPG-default":
+    if alg == "pure":
         act_pink = False
         act_RND = False
     elif alg == "pinkNoise":
         act_pink = True
         act_RND = False
+    elif alg == "RND":
+        act_pink = False
+        act_RND = True
     elif alg == "pinkNoiseRND":
         act_pink = True
-        act_RND = False
+        act_RND = True
     else:
-        act_pink, act_RND = False
+        raise ValueError("Unknown algorithm modification")
 
     # Initialization of RND-Module
     if act_RND:
-        rnd = RNDModule(input_dim=env.observation_space.shape[0], output_dim=16)  # output_dim kann angepasst werden
-        rnd_optimizer = torch.optim.Adam(rnd.parameters(), lr=0.001)  # Optional: Learning rate für das RND-Modul
+        rnd = RNDModule(input_dim=env.observation_space.shape[0], output_dim=16)  # Parameter: Output dimension
+        rnd_optimizer = torch.optim.Adam(rnd.parameters(), lr=0.005)  # Parameter: Learning rate
     #############################################
-
 
     if random_seed is not None:
         torch.manual_seed(random_seed)
@@ -545,13 +622,22 @@ def main():
     losses = []
     timestep = 0
 
+    # RND variables
+    counter = 1
+    rnd_states = []
+
     def save_statistics():
-        with open(f"./results/{pol}_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}-stat.pkl", 'wb') as f:
+        with open(f"./results/RND/{pol}_{alg}_{env_name}-m{max_episodes}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}-stat.pkl", 'wb') as f:
             pickle.dump({"rewards" : rewards, "lengths": lengths, "eps": eps, "train": train_iter,
                          "lr": lr, "update_every": opts.update_every, "losses": losses}, f)
 
     # training loop
     for i_episode in range(1, int(max_episodes)+1):
+
+        # RND counter
+        if i_episode % (int(max_episodes) / 10) == 0:
+            counter += 1
+
         ob, _info = env.reset()
         agent.reset()
         total_reward=0
@@ -560,28 +646,23 @@ def main():
             done = False
             a = agent.act(ob)
             (ob_new, reward, done, trunc, _info) = env.step(a)
-            total_reward += reward
 
+            # RND exploration
             if act_RND:
                 # Calculate the RND exploration bonus
-                s = torch.from_numpy(np.array(ob, dtype=np.float32)).to(device)
-                exploration_bonus = rnd.forward(s)
-                reward += exploration_bonus.item()
+                (reward, rnd_states, rnd) = rnd_exploration(ob, reward, rnd_states, rnd)
+
+            total_reward += reward
 
             agent.store_transition((ob, a, reward, ob_new, done))
             ob=ob_new
 
-            if act_RND:
-                # Training RND-Module
-                loss_rnd = nn.MSELoss()
-                target_output = rnd.target(s)
-                predicted_output = rnd.predictor(s)
-                loss = loss_rnd(predicted_output, target_output)
-                rnd_optimizer.zero_grad()
-                loss.backward()
-                rnd_optimizer.step()
-
             if done or trunc: break
+
+        # RND training
+        if act_RND:
+            if i_episode % (1 * counter) == 0:
+                (rnd_states, rnd, rnd_optimizer) = rnd_training(rnd_states, rnd, rnd_optimizer)
 
         losses.extend(agent.train(train_iter))
 
@@ -591,7 +672,7 @@ def main():
         # save every 500 episodes
         if i_episode % 500 == 0:
             print("########## Saving a checkpoint... ##########")
-            torch.save(agent.state(), f'./results/{pol}_{env_name}_{i_episode}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}.pth')
+            torch.save(agent.state(), f'./results/RND/{pol}_{env_name}_{i_episode}-eps{eps}-t{train_iter}-l{lr}-s{random_seed}.pth')
             save_statistics()
 
         # logging
