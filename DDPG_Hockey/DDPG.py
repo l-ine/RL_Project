@@ -14,10 +14,10 @@ import random  # for RND
 # from https://github.com/martius-lab/pink-noise-rl
 # but not sure how to use it here
 
-import memory as mem
-from feedforward import Feedforward
-#from . import memory as mem
-#from .feedforward import Feedforward
+#import memory as mem
+#from feedforward import Feedforward
+from . import memory as mem
+from .feedforward import Feedforward
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.set_num_threads(1)
@@ -532,16 +532,8 @@ class TD3Opponent():
   def __init__(self, keep_mode=True):
       self.keep_mode = keep_mode
 
-      checkpoint = "agents/training7_TD3_pure_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oswitch.pth"
-      #"agents/training2_TD3_pinkNoise_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oweak.pth"
-      #"agents/training2_TD3_pinkNoise_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oswitch.pth"
-      #"../../agents/TD3_pure_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oswitch.pth"
-      # training4_TD3_pure_Hockey_3000_m3000.0-eps0.3-t32-l0.0005-s1.pth"
-      # "agents/training2_TD3_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
-      # "agents/training1_TD3_pinkNoise_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1.pth"
-      # "agents/training1_TD3_pinkNoise_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1.pth"
-      #"agents/training1_TD3_pure_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1.pth"
-      # "agents/training4_TD3_pure_Hockey_3000_m3000.0-eps0.3-t32-l0.0005-s1.pth"
+      checkpoint = "../../agents/participating_in_competition/TD3_pure_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oswitch.pth"
+      print("check if this is the best:", checkpoint)
       env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
       self.agent = TD3(env.observation_space, env.action_space)
       self.agent.restore_state(torch.load(checkpoint, weights_only=True))
@@ -550,6 +542,47 @@ class TD3Opponent():
       action = self.agent.act(obs)
       return action
 
+class RNDOpponent():
+  def __init__(self, keep_mode=True):
+      self.keep_mode = keep_mode
+
+      checkpoint = "../../agents/participating_in_competition/TD3_RND_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
+      print(checkpoint)
+      env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
+      self.agent = TD3(env.observation_space, env.action_space)
+      self.agent.restore_state(torch.load(checkpoint, weights_only=True))
+
+  def act(self, obs):
+      action = self.agent.act(obs)
+      return action
+
+class PinkNoiseOpponent():
+  def __init__(self, keep_mode=True):
+      self.keep_mode = keep_mode
+
+      checkpoint = "../../agents/participating_in_competition/TD3_pinkNoise_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
+      print(checkpoint)
+      env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
+      self.agent = TD3(env.observation_space, env.action_space)
+      self.agent.restore_state(torch.load(checkpoint, weights_only=True))
+
+  def act(self, obs):
+      action = self.agent.act(obs)
+      return action
+
+class CombiOpponent():
+  def __init__(self, keep_mode=True):
+      self.keep_mode = keep_mode
+
+      checkpoint = "../../agents/participating_in_competition/TD3_pinkNoiseRND_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1.pth"
+      print(checkpoint)
+      env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
+      self.agent = TD3(env.observation_space, env.action_space)
+      self.agent.restore_state(torch.load(checkpoint, weights_only=True))
+
+  def act(self, obs):
+      action = self.agent.act(obs)
+      return action
 
 def main():
     optParser = optparse.OptionParser()
