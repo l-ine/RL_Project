@@ -16,8 +16,8 @@ import random  # for RND
 
 import memory as mem
 from feedforward import Feedforward
-# from . import memory as mem
-# from .feedforward import Feedforward
+#from . import memory as mem
+#from .feedforward import Feedforward
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.set_num_threads(1)
@@ -532,7 +532,16 @@ class TD3Opponent():
   def __init__(self, keep_mode=True):
       self.keep_mode = keep_mode
 
-      checkpoint = "agents/TD3_pure_Hockey_50_m2000-eps0.3-t32-l0.0001-s1.pth"
+      checkpoint = "agents/training7_TD3_pure_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oswitch.pth"
+      #"agents/training2_TD3_pinkNoise_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oweak.pth"
+      #"agents/training2_TD3_pinkNoise_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oswitch.pth"
+      #"../../agents/TD3_pure_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oswitch.pth"
+      # training4_TD3_pure_Hockey_3000_m3000.0-eps0.3-t32-l0.0005-s1.pth"
+      # "agents/training2_TD3_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
+      # "agents/training1_TD3_pinkNoise_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1.pth"
+      # "agents/training1_TD3_pinkNoise_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1.pth"
+      #"agents/training1_TD3_pure_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1.pth"
+      # "agents/training4_TD3_pure_Hockey_3000_m3000.0-eps0.3-t32-l0.0005-s1.pth"
       env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
       self.agent = TD3(env.observation_space, env.action_space)
       self.agent.restore_state(torch.load(checkpoint, weights_only=True))
@@ -625,13 +634,13 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
-    #checkpoint = "results/TD3_pure_Hockey_2000_m2000.0-eps0.3-t32-l0.0005-s1.pth"
+    checkpoint = "results/td3_pure_m10000_switch_training7/TD3_pure_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oswitch.pth"
+    #"results/td3_pure_m5000_strong_training4/TD3_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
     if pol == "TD3":
         # Initialize TD3 Agent
         agent = TD3(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                     update_target_every=opts.update_every, colNoise=act_pink)
-
-        #agent.restore_state(torch.load(checkpoint))#, weights_only=True))
+        agent.restore_state(torch.load(checkpoint))#, weights_only=True))
     else:  # so pol=="DDPG" is default
         agent = DDPGAgent(env.observation_space, env.action_space, eps=eps, learning_rate_actor=lr,
                           update_target_every=opts.update_every, colNoise=act_pink)
@@ -645,6 +654,8 @@ def main():
         opponent = h_env.BasicOpponent(weak=True)  # True = weak opponent
     elif opp == "strong":
         opponent = h_env.BasicOpponent(weak=False)  # False = strong opponent
+    elif opp == "selfplay":
+        opponent = agent
     else:
         raise ValueError("Unknown opponent mode")
 
