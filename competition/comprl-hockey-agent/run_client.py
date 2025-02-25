@@ -6,17 +6,16 @@ import uuid
 import hockey.hockey_env as h_env
 import numpy as np
 
-
 from comprl.client import Agent, launch_client
 
 import sys
 import os
 
-# Absoluten Pfad zu RL_Project berechnen und zu sys.path hinzufügen
+# append path to Hockey_training
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
-sys.path.append("C:/Users/pi030/Documents/Uni/ReinforcementLearning/finalProject/code/RL_Project/DDPG_Hockey")
+#sys.path.append("C:/Users/pi030/Documents/Uni/ReinforcementLearning/finalProject/code/RL_Project/DDPG_Hockey")
 
-import DDPG
+import Hockey_training.training as training
 
 
 class RandomAgent(Agent):
@@ -37,19 +36,19 @@ class RandomAgent(Agent):
 
 
 class HockeyAgent(Agent):
-    """A hockey agent that can be weak or strong."""
+    """A hockey agent that trained with different algorithms."""
 
     def __init__(self, type: str) -> None:
         super().__init__()
         #self.hockey_agent = h_env.BasicOpponent(weak=weak)
         if type == "TD3":
-            self.hockey_agent = DDPG.TD3Opponent()
+            self.hockey_agent = training.TD3Opponent()
         elif type == "RND":
-            self.hockey_agent = DDPG.RNDOpponent()
+            self.hockey_agent = training.RNDOpponent()
         elif type == "pinkNoise":
-            self.hockey_agent = DDPG.PinkNoiseOpponent()
+            self.hockey_agent = training.PinkNoiseOpponent()
         elif type == "combi":
-            self.hockey_agent = DDPG.CombiOpponent()
+            self.hockey_agent = training.CombiOpponent()
         else:
             raise ValueError(f"Unknown agent: {type}")
         
@@ -57,19 +56,9 @@ class HockeyAgent(Agent):
 
     def get_step(self, observation: list[float]) -> list[float]:
 
-        #print(f"observation: {observation}")
         action = self.hockey_agent.act(observation).tolist()
-        #print("actions chosen...")
-        #print(f"action: {action}")
-        # NOTE: If your agent is using discrete actions (0-7), you can use
-        # HockeyEnv.discrete_to_continous_action to convert the action:
-        #
 
-        #env = h_env.HockeyEnv()
-        #continuous_action = env.discrete_to_continous_action(action)
-        #print(action)
         return action
-        #return continuous_action
 
     def on_start_game(self, game_id) -> None:
         game_id = uuid.UUID(int=int.from_bytes(game_id, byteorder='big'))
@@ -92,7 +81,7 @@ def initialize_agent(agent_args: list[str]) -> Agent:
         "--agent",
         type=str,
         choices=["TD3", "RND", "pinkNoise", "combi"],
-        default="best",
+        default="TD3",
         help="Which agent to use.",
     )
     args = parser.parse_args(agent_args)
@@ -110,16 +99,6 @@ def initialize_agent(agent_args: list[str]) -> Agent:
         agent = HockeyAgent("combi")
     else:
         raise ValueError(f"Unknown agent: {args.agent}")
-
-
-    # if args.agent == "weak":
-    #     agent = HockeyAgent(weak=True)
-    # elif args.agent == "strong":
-    #     agent = HockeyAgent(weak=False)
-    # elif args.agent == "random":
-    #     agent = RandomAgent()
-    # else:
-    #     raise ValueError(f"Unknown agent: {args.agent}")
 
     # And finally return the agent.
     return agent
