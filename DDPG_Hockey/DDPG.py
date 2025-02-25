@@ -9,15 +9,10 @@ import pickle
 import hockey.hockey_env as h_env
 import random  # for RND
 
-# from pink import PinkActionNoise
-# install with pip install pink-noise-rl
-# from https://github.com/martius-lab/pink-noise-rl
-# but not sure how to use it here
-
-#import memory as mem
-#from feedforward import Feedforward
-from . import memory as mem
-from .feedforward import Feedforward
+import memory as mem
+from feedforward import Feedforward
+#from . import memory as mem
+#from .feedforward import Feedforward
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.set_num_threads(1)
@@ -83,7 +78,7 @@ class OUNoise():
         self.noise_prev = np.zeros(self._shape)
 
 
-# code works but we have to check if it makes sense and if it improves something
+# colored noise generation (default: pink noise)
 class ColoredNoise:
     def __init__(self, shape, beta: float = 1.0, dt: float = 1e-2):
         """
@@ -103,16 +98,14 @@ class ColoredNoise:
         self.reset()
 
     def __call__(self) -> np.ndarray:
-        """
-        Generate a single step of noise.
-        """
+
         # Generate frequency components
         freqs = np.fft.rfftfreq(self._shape, d=self._dt)  # Frequencies for Fourier transform
-        # Scale by f^(-β/2), avoiding divide-by-zero
 
-        scale = np.zeros_like(freqs)  # Initialize scale with zeros
-        nonzero_freqs = freqs > 0  # Identify nonzero frequencies
-        scale[nonzero_freqs] = freqs[nonzero_freqs] ** (-self._beta / 2)
+        # Scale by f^(-β), avoiding divide-by-zero
+        scale = np.zeros_like(freqs)
+        nonzero_freqs = freqs > 0
+        scale[nonzero_freqs] = freqs[nonzero_freqs] ** (-self._beta)
 
         real_part = np.random.normal(0, 1, len(freqs)) * scale  # Real part
         imag_part = np.random.normal(0, 1, len(freqs)) * scale  # Imaginary part
@@ -122,7 +115,7 @@ class ColoredNoise:
 
         # Transform back to time domain
         noise = np.fft.irfft(spectrum, n=self._shape)
-        self.noise_prev = noise  # Store last noise value (optional, for reset compatibility)
+        self.noise_prev = noise
         return noise
 
     def reset(self) -> None:
@@ -191,6 +184,7 @@ def rnd_training(rnd_states, rnd, rnd_optimizer):
     return rnd_states, rnd, rnd_optimizer
 
 
+# TD3 Agent
 class TD3():
     def __init__(self, observation_space, action_space, **userconfig):
         if not isinstance(observation_space, spaces.box.Box):
@@ -208,7 +202,7 @@ class TD3():
                                             action_space.high[:self._action_n],
                                             (self._action_n,), dtype=np.float32)
         self._config = {
-            "eps": 0.1,            # Epsilon: noise strength to add to policy
+            "eps": 0.1,
             "discount": 0.95,
             "buffer_size": int(1e6),
             "batch_size": 128,
@@ -230,7 +224,7 @@ class TD3():
         # pink noise
         if self._colNoise:
             self.action_noise = ColoredNoise((self._action_n))
-        # OU Noise (default)
+        # OU Noise
         else:
             self.action_noise = OUNoise((self._action_n))
 
@@ -316,9 +310,9 @@ class TD3():
             data = self.buffer.sample(batch=self._config['batch_size'])
             s = to_torch(np.stack(data[:, 0]))  # s_t
             a = to_torch(np.stack(data[:, 1]))  # a_t
-            rew = to_torch(np.stack(data[:, 2])[:, None])  # rew  (batchsize,1)
+            rew = to_torch(np.stack(data[:, 2])[:, None])  # rew
             s_prime = to_torch(np.stack(data[:, 3]))  # s_t+1
-            done = to_torch(np.stack(data[:, 4])[:, None])  # done signal  (batchsize,1)
+            done = to_torch(np.stack(data[:, 4])[:, None])  # done signal
 
             with torch.no_grad():
                 # Trick 3: Target Policy Smoothing. 
@@ -370,9 +364,6 @@ class TD3():
 
 # DDPG Agent
 class DDPGAgent(object):
-    """
-    Agent implementing Q-learning with NN function approximation.
-    """
     def __init__(self, observation_space, action_space, **userconfig):
 
         if not isinstance(observation_space, spaces.box.Box):
@@ -390,7 +381,7 @@ class DDPGAgent(object):
                                             action_space.high[:self._action_n],
                                             (self._action_n,), dtype=np.float32)
         self._config = {
-            "eps": 0.1,            # Epsilon: noise strength to add to policy
+            "eps": 0.1,
             "discount": 0.95,
             "buffer_size": int(1e6),
             "batch_size": 128,
@@ -409,7 +400,7 @@ class DDPGAgent(object):
         # pink noise
         if self._colNoise:
             self.action_noise = ColoredNoise((self._action_n))
-        # OU Noise (default)
+        # OU Noise
         else:
             self.action_noise = OUNoise((self._action_n))
 
@@ -452,7 +443,7 @@ class DDPGAgent(object):
         if eps is None:
             eps = self._eps
         action_pure = self.policy.predict(observation)
-        action_eps = action_pure + eps*self.action_noise()  # action in -1 to 1 (+ noise)
+        action_eps = action_pure + eps*self.action_noise()
         action = np.clip(action_eps, self.half_action_space.low, self.half_action_space.high)
         return action
 
@@ -483,10 +474,9 @@ class DDPGAgent(object):
             data = self.buffer.sample(batch=self._config['batch_size'])
             s = to_torch(np.stack(data[:, 0]))  # s_t
             a = to_torch(np.stack(data[:, 1]))  # a_t
-            rew = to_torch(np.stack(data[:, 2])[:, None])  # rew  (batchsize,1)
+            rew = to_torch(np.stack(data[:, 2])[:, None])  # rew
             s_prime = to_torch(np.stack(data[:, 3]))  # s_t+1
-            done = to_torch(np.stack(data[:, 4])[:, None])  # done signal  (batchsize,1)
-            # print(f"s: {s.shape}\na: {a.shape}\nrew: {rew.shape}\ns_prime:{s_prime.shape}\ndone:{done.shape}")
+            done = to_torch(np.stack(data[:, 4])[:, None])  # done signal
 
             if self._config["use_target_net"]:
                 q_prime = self.Q_target.Q_value(s_prime, self.policy_target.forward(s_prime))
@@ -528,11 +518,12 @@ class DDPGOpponent():
         return action
 
 
+# classes to load the 4 final opponents that participate in the competition
 class TD3Opponent():
   def __init__(self, keep_mode=True):
       self.keep_mode = keep_mode
 
-      checkpoint = "../../agents/participating_in_competition/TD3_pure_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oswitch.pth"
+      checkpoint = "../../agents/participating_in_competition/TD3_pure_final.pth"
       print("check if this is the best:", checkpoint)
       env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
       self.agent = TD3(env.observation_space, env.action_space)
@@ -546,7 +537,7 @@ class RNDOpponent():
   def __init__(self, keep_mode=True):
       self.keep_mode = keep_mode
 
-      checkpoint = "../../agents/participating_in_competition/TD3_RND_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
+      checkpoint = "../../agents/participating_in_competition/TD3_RND_final.pth"
       print(checkpoint)
       env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
       self.agent = TD3(env.observation_space, env.action_space)
@@ -560,7 +551,7 @@ class PinkNoiseOpponent():
   def __init__(self, keep_mode=True):
       self.keep_mode = keep_mode
 
-      checkpoint = "../../agents/participating_in_competition/TD3_pinkNoise_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
+      checkpoint = "../../agents/participating_in_competition/TD3_pinkNoise_final.pth"
       print(checkpoint)
       env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
       self.agent = TD3(env.observation_space, env.action_space)
@@ -574,7 +565,7 @@ class CombiOpponent():
   def __init__(self, keep_mode=True):
       self.keep_mode = keep_mode
 
-      checkpoint = "../../agents/participating_in_competition/TD3_pinkNoiseRND_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1.pth"
+      checkpoint = "../../agents/participating_in_competition/TD3_combi_final.pth"
       print(checkpoint)
       env = h_env.HockeyEnv(keep_mode=self.keep_mode, verbose=True)
       self.agent = TD3(env.observation_space, env.action_space)
@@ -584,6 +575,8 @@ class CombiOpponent():
       action = self.agent.act(obs)
       return action
 
+
+# main function to train the agents
 def main():
     optParser = optparse.OptionParser()
     optParser.add_option('-e', '--env', action='store', type='string',
@@ -599,7 +592,7 @@ def main():
                          dest='lr', default=0.0001,
                          help='learning rate for actor/policy (default %default)')
     optParser.add_option('-m', '--maxepisodes', action='store',  type='float',
-                         dest='max_episodes', default=2000,
+                         dest='max_episodes', default=5000,
                          help='number of episodes (default %default)')
     optParser.add_option('-u', '--update', action='store',  type='float',
                          dest='update_every', default=100,
@@ -618,12 +611,11 @@ def main():
     optParser.add_option('-o', '--opponent', action='store', dest='opp',
                          default="strong", help='opponents mode (strong, weak, switch), (default %default)')
     opts, args = optParser.parse_args()
+
     # ############# Hyperparameters ##############
     debug_mode = opts.debug_mode
     env_name = opts.env_name
     # creating environment
-    if env_name == "LunarLander-v2":
-        env = gym.make(env_name, continuous=True)
     if env_name == "Hockey":
         env = h_env.HockeyEnv(verbose=debug_mode)
     else:
@@ -667,6 +659,7 @@ def main():
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
 
+    # load checkpoint to continue training
     checkpoint = "results/td3_pure_m10000_switch_training7/TD3_pure_Hockey_10000_m10000.0-eps0.3-t32-l0.0005-s1-oswitch.pth"
     #"results/td3_pure_m5000_strong_training4/TD3_pure_Hockey_5000_m5000.0-eps0.3-t32-l0.0005-s1.pth"
     if pol == "TD3":

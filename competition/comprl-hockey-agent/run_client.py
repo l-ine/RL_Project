@@ -14,9 +14,9 @@ import os
 
 # Absoluten Pfad zu RL_Project berechnen und zu sys.path hinzufügen
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
+sys.path.append("C:/Users/pi030/Documents/Uni/ReinforcementLearning/finalProject/code/RL_Project/DDPG_Hockey")
 
-# TODO: Hier der richtige Pfad?
-import RL.DDPG_Hockey.DDPG as DDPG
+import DDPG
 
 
 class RandomAgent(Agent):
