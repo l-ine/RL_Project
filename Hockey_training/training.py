@@ -142,6 +142,7 @@ def rnd_exploration(ob, reward, rnd_states, rnd, rnd_threshold):
     exploration_bonus = rnd.forward(s).item()
     rnd_states.append(s)
 
+    # Exploration bonus when MSE above threshold
     if exploration_bonus > np.mean(rnd_threshold):  # if state is unknown -> explore
         reward += exploration_bonus * 0.2
         rnd_threshold.append(exploration_bonus)
@@ -159,14 +160,13 @@ def rnd_exploration(ob, reward, rnd_states, rnd, rnd_threshold):
 def rnd_training(rnd_states, rnd, rnd_optimizer):
     batch_size_rnd = 32
 
-    # Training RND-Module batch-wise
+    # Training of RND batch-wise
     if len(rnd_states) >= batch_size_rnd:
         # Select states batch-wise
         rnd_states.sort(key=lambda x: rnd.forward(x).item(), reverse=True)
         states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(
             device)  # train the most difficult states
 
-        # states_batch = torch.stack(rnd_states[:batch_size_rnd]).to(device)
         # Target and predictor
         target_output = rnd.target(states_batch)
         predicted_output = rnd.predictor(states_batch)
