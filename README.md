@@ -17,21 +17,6 @@ RL_Project-main/
 │-- README.md             # Project documentation
 ```
 
-## Installation
-
-1. Clone the repository:
-   ```sh
-   git clone https://github.com/yourusername/RL_Project-main.git
-   ```
-2. Install dependencies:
-   ```sh
-   pip install -r requirements.txt
-   ```
-3. Run the environment setup (if required):
-   ```sh
-   python hockey_env.py --setup
-   ```
-
 ## Usage
  
 ### Training an Agent
