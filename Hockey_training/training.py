@@ -77,7 +77,7 @@ class OUNoise():
         self.noise_prev = np.zeros(self._shape)
 
 
-# colored noise generation (default: pink noise)
+# colored noise generation (default: pink noise) | Implemented by Pia M.
 class ColoredNoise:
     def __init__(self, shape, beta: float = 1.0, dt: float = 1e-2):
         """
@@ -121,7 +121,7 @@ class ColoredNoise:
         self.noise_prev = np.zeros(self._shape)
 
 
-# RND Module
+# RND Module | Implemented by Meike K.
 class RNDModule(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_sizes=[64, 64]):
         super().__init__()
@@ -183,7 +183,7 @@ def rnd_training(rnd_states, rnd, rnd_optimizer):
     return rnd_states, rnd, rnd_optimizer
 
 
-# TD3 Agent
+# TD3 Agent | Implemented by Line A.
 class TD3():
     def __init__(self, observation_space, action_space, **userconfig):
         if not isinstance(observation_space, spaces.box.Box):
