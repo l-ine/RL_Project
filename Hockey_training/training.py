@@ -229,6 +229,9 @@ class TD3():
 
         self.buffer = mem.Memory(max_size=self._config["buffer_size"])
 
+        # Trick 2: Clipped Double-Q Learning.
+        # TD3 learns two different Q functions (see networks and target networks).
+        
         # Q Networks
         self.Q1 = QFunction(observation_dim=self._obs_dim,
                             action_dim=self._action_n,
@@ -300,8 +303,6 @@ class TD3():
         losses = []
         self.train_iter += 1
 
-        # if self.train_iter % self._config["update_target_every"] == 0:
-        #    self._copy_nets()
         if self._config["use_target_net"] and self.train_iter % self._config["update_target_every"] == 0:
             self._copy_nets()
 
@@ -314,41 +315,39 @@ class TD3():
             done = to_torch(np.stack(data[:, 4])[:, None])  # done signal
 
             with torch.no_grad():
-                # Trick 3: Target Policy Smoothing. 
-                # TD3 adds noise to the target action, to make it harder for the policy to exploit Q-function errors by
-                # smoothing out Q along changes in action.
+                # Trick 1: Target Policy Smoothing. 
+                # TD3 adds Gaussian noise to the target action.
             
-                # Generate noise for target policy smoothing
+                # generate noise for target policy smoothing
                 noise = (torch.randn_like(a) * self._config["policy_noise"]).clamp(-self._config["noise_clip"],
                                                                                    self._config["noise_clip"])
                 
-                # Compute the target action with added noise and clamp it within the action space bounds
+                # compute the target action with added noise and clamp it within the action space bounds
                 a_prime = (self.policy_target(s_prime) + noise).clamp(torch.tensor(self.half_action_space.low),
                                                                       torch.tensor(self.half_action_space.high))
                     
-                # Trick 1: Clipped Double-Q Learning.
-                # TD3 learns two Q-functions instead of one (hence “twin”), and uses the smaller of the two Q-values to
-                # form the targets in the Bellman error loss functions.
+                # Trick 2: Clipped Double-Q Learning.
+                # TD3 learns two Q-functions instead of one, and uses the smaller of the two Q-values for the target.
                 # Compute the target Q-values using the target Q-networks
                 q1_prime = self.Q1_target.Q_value(s_prime, a_prime)
                 q2_prime = self.Q2_target.Q_value(s_prime, a_prime)
                 
-                # Use the minimum of the two Q-values to form the target
+                # use the minimum of the two Q-values to form the target
                 q_prime = torch.min(q1_prime, q2_prime)
             
-            # Compute the TD target
+            # target
             gamma = self._config['discount']
             td_target = rew + gamma * (1.0 - done) * q_prime
 
-            # Optimize the Q objectives
+            # optimize the Q objectives
             q1_loss = self.Q1.fit(s, a, td_target)
             q2_loss = self.Q2.fit(s, a, td_target)
 
-            # Trick 2: “Delayed” Policy Updates. 
-            # TD3 updates the policy (and target networks) less frequently than the Q-function, recommended: one
-            # policy update for every two Q-function updates.
+            # Trick 3: “Delayed” Policy Updates. 
+            # TD3 updates the policy (and target networks) less frequently than the Q-function,
+            # here: once for every two Q function updates.
             
-            # Optimize actor objective
+            # optimize actor objective
             if self.train_iter % self._config["policy_freq"] == 0:
                 self.optimizer.zero_grad()
                 q = torch.min(self.Q1.Q_value(s, self.policy(s)), self.Q2.Q_value(s, self.policy(s)))
@@ -782,6 +781,7 @@ def main():
                         #for transition in episode_transitions:
                         #    agent.store_transition(transition)
                     else:
+                        # uncomment if you want a penalty if no goal was shooted:
                         #discount_factor = 0.95
                         #no_goal_reward = -4.0
                         #for i in range(len(episode_transitions) - 1, -1, -1):
