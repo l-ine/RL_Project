@@ -49,9 +49,7 @@ python competition/run_competition.py --agent1 <agent1> --agent2 <agent2>
 ## Contributing
 Feel free to fork the repository and submit pull requests. If you encounter any issues, please open an issue.
 
-## License
-This project is licensed under the MIT License.
-
 ## Acknowledgments
+- We want to thank Georg Martius and his lab for setting up the hockey environment and the tournament server and organizing everything around it. Playing with our agents was fun!
 - Inspired by RL-based sports simulations.
 - Uses OpenAI Gym environments.
